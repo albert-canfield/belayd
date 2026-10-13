@@ -2,9 +2,10 @@
 // Measures how long one `belayd hook claude-code` call takes, end to end, the way an
 // agent runs it: a fresh Node process per tool call, JSON on stdin.
 //
-//   node scripts/bench-hook.mjs [--runs 40] [--max-p50 100]
+//   node scripts/bench-hook.mjs [--runs 40] [--max-overhead 100] [--max-p50 ms]
 //
-// Exits non-zero when the median is above --max-p50 milliseconds, so CI can guard it.
+// Overhead is the median hook time minus the median time of a bare `node -e ''`, which
+// is what belayd adds to every tool call. Exits non-zero when a budget is exceeded.
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -20,7 +21,8 @@ const opt = (name, fallback) => {
   return i >= 0 ? Number(args[i + 1]) : fallback;
 };
 const runs = opt('--runs', 40);
-const maxP50 = opt('--max-p50', 100);
+const maxOverhead = opt('--max-overhead', 100);
+const maxP50 = opt('--max-p50', Infinity);
 
 if (!fs.existsSync(bin)) {
   console.error('dist/bin.js not found. Run `pnpm build` first.');
@@ -82,6 +84,7 @@ console.log(
 console.log(`bare node startup: p50 ${pct(baseline, 50).toFixed(1)} ms\n`);
 
 let worstP50 = 0;
+const bare = pct(baseline, 50);
 for (const [name, payload] of Object.entries(scenarios)) {
   once(payload); // warm the compile cache
   const times = [];
@@ -91,14 +94,21 @@ for (const [name, payload] of Object.entries(scenarios)) {
   worstP50 = Math.max(worstP50, p50);
   console.log(
     `${name.padEnd(18)} p50 ${p50.toFixed(1).padStart(6)} ms   p95 ${pct(times, 95).toFixed(1).padStart(6)} ms   ` +
-      `overhead over bare node ${(p50 - pct(baseline, 50)).toFixed(1).padStart(6)} ms`,
+      `overhead ${(p50 - bare).toFixed(1).padStart(6)} ms`,
   );
 }
 
 fs.rmSync(workspace, { recursive: true, force: true });
 
-if (worstP50 > maxP50) {
-  console.error(`\nFAIL: worst p50 ${worstP50.toFixed(1)} ms is above the ${maxP50} ms budget`);
+const overhead = worstP50 - bare;
+const failures = [];
+if (overhead > maxOverhead)
+  failures.push(`overhead ${overhead.toFixed(1)} ms is above ${maxOverhead} ms`);
+if (worstP50 > maxP50) failures.push(`p50 ${worstP50.toFixed(1)} ms is above ${maxP50} ms`);
+if (failures.length > 0) {
+  console.error(`\nFAIL: ${failures.join('; ')}`);
   process.exit(1);
 }
-console.log(`\nOK: worst p50 ${worstP50.toFixed(1)} ms is within the ${maxP50} ms budget`);
+console.log(
+  `\nOK: worst p50 ${worstP50.toFixed(1)} ms, overhead ${overhead.toFixed(1)} ms (budget ${maxOverhead} ms)`,
+);

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm build
+      - name: Hook latency (fails above 100 ms overhead per call)
+        run: node scripts/bench-hook.mjs --runs 30 --max-overhead 100
+      - name: Packed tarball works with npx
+        run: |
+          npm pack --silent --pack-destination "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          npx --yes --package "$RUNNER_TEMP/belayd-$(node -p "require('$GITHUB_WORKSPACE/package.json').version").tgz" \
+            belayd check 'rm -rf ~' | tee out.txt
+          grep -q deny out.txt

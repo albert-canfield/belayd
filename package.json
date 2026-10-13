@@ -47,25 +47,23 @@
     "bench": "node scripts/bench-hook.mjs",
     "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
-  "dependencies": {
-    "commander": "15.0.0",
-    "picocolors": "1.1.1",
-    "picomatch": "4.0.7",
-    "unbash": "5.1.0",
-    "yaml": "2.9.1",
-    "zod": "4.6.7"
-  },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "^22.20.5",
     "@types/picomatch": "4.0.3",
+    "commander": "15.0.0",
     "eslint": "10.12.0",
     "globals": "17.13.0",
+    "picocolors": "1.1.1",
+    "picomatch": "4.0.7",
     "prettier": "3.9.10",
     "tsup": "8.5.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2",
-    "vitest": "5.0.4"
+    "unbash": "5.1.0",
+    "vitest": "5.0.4",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
