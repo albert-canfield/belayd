@@ -81,7 +81,7 @@ MCP gateways are mostly server-side and identity-centric. Local, per-developer a
 | [StrongDM Leash](https://github.com/strongdm/leash) | 592 | container, eBPF, Cedar, MITM proxy, control UI | toggles in UI | yes | no |
 | Docker Sandboxes | product | microVM per agent | no | ? | disposable |
 
-These are complements, not competitors. leashd should recommend pairing with one of them for untrusted code.
+These are complements, not competitors. belayd should recommend pairing with one of them for untrusted code.
 
 ## Session audit and replay
 
@@ -93,13 +93,13 @@ These are complements, not competitors. leashd should recommend pairing with one
 2. **Undo that covers shell commands.** Native checkpoints skip Bash and terminal changes. A snapshot before every mutating call, Bash included, linked to its audit row, makes "undo step 7" and "undo this session" real.
 3. **Parsing, with unparseable meaning ask.** Most hook packs match regex on the raw string. Only Kintsugi treats "cannot parse" as "hold".
 4. **A policy file people can read.** The alternatives are Rego, Cedar, CEL, or a separate format per agent.
-5. **Consistent approval.** Several agents cannot ask from a hook, and Cursor has `ask` bugs and fails open on malformed hook output. leashd brings its own approval channel with a fail-closed timeout.
+5. **Consistent approval.** Several agents cannot ask from a hook, and Cursor has `ask` bugs and fails open on malformed hook output. belayd brings its own approval channel with a fail-closed timeout.
 6. **Honesty.** Publish a threat model and a per-agent capability matrix (what we can intercept, ask about and undo for each agent). Sondera does the matrix well. This turns the "wrong layer" criticism into a point in our favour.
-7. **Write-then-execute awareness.** The HN `package.json` objection: if the agent edits a script and then runs it, a command allowlist is meaningless. leashd sees both the write and the run in the same session and can raise the run to `ask`. No one in this list does that.
+7. **Write-then-execute awareness.** The HN `package.json` objection: if the agent edits a script and then runs it, a command allowlist is meaningless. belayd sees both the write and the run in the same session and can raise the run to `ask`. No one in this list does that.
 
 ## Positioning
 
-Not another command blocker, not another sandbox. leashd is the local **flight recorder and undo button** for every coding agent, with one readable policy in front:
+Not another command blocker, not another sandbox. belayd is the local **flight recorder and undo button** for every coding agent, with one readable policy in front:
 
 - one short allow/ask/deny file, enforced through each agent's own hooks
 - real shell parsing, where anything it cannot understand becomes a question
@@ -109,16 +109,6 @@ Not another command blocker, not another sandbox. leashd is the local **flight r
 
 The threat model says it plainly: guardrail, recorder and recovery, not a containment boundary. For untrusted code, pair it with a sandbox.
 
-## Name conflicts
+## Similar names
 
-The name `leashd` is a problem.
-
-| Project | What it is | Risk |
-|---|---|---|
-| [vmehera123/leashd](https://github.com/vmehera123/leashd) | PyPI `leashd`, v2.3.0, 51 releases since March 2026, about 800 downloads a month. Claude Code daemon with YAML allow/deny/approval rules, web and Telegram approvals, audit trail, `leashd` CLI | High: same name, same category, same features |
-| leashd.io, leashd.dev ([brainbytes-dev/leashd](https://github.com/brainbytes-dev/leashd)) | AI agent spend governance | Medium: the obvious domains are gone |
-| [StrongDM Leash](https://github.com/strongdm/leash) | 592 stars, `leash` CLI, npm `@strongdm/leash`, agent sandbox with policy | Medium: "leashd" reads as "the Leash daemon" |
-| [open-leash/leash](https://github.com/open-leash/leash) | "The open-source safety layer for AI agents", approvals and history | Medium: near-identical tagline |
-| npm `@melihmucuk/leash`, npm `leashed`, PyPI `leash`, PyPI `agent-leash` | Guardrails, policy and sandboxes for agents | Low each, high together |
-
-The leash metaphor is saturated in this exact category. See `docs/plan.md` for alternatives.
+[Agent Belay](https://github.com/mikepenz/agent-belay) (9 stars, Kotlin, Apache-2.0, cross-platform desktop app, pre-built for macOS only) is the closest name to ours. It shows Claude Code, Copilot and other agents' hook requests in a review queue, runs them through a built-in "Protection Engine" (per-module block, ask, auto-correct or log), supports persistent "Always Allow" patterns and optional AI risk scoring, and keeps a searchable SQLite history. It has no user-written policy file and no undo. A fair comparison for the approval part.

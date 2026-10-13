@@ -10,7 +10,7 @@ coverage/
 *.sqlite
 *.sqlite-journal
 *.db
-.leashd/
+.belayd/
 
 # Logs
 *.log

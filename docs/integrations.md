@@ -1,6 +1,6 @@
 # Integrations
 
-How leashd can see and stop an agent's actions before they run, per agent. Researched 13 Oct 2026 from official docs. Versions and dates are noted because these hook systems change fast.
+How belayd can see and stop an agent's actions before they run, per agent. Researched 13 Oct 2026 from official docs. Versions and dates are noted because these hook systems change fast.
 
 ## Summary
 
@@ -19,8 +19,8 @@ How leashd can see and stop an agent's actions before they run, per agent. Resea
 
 Three conclusions shape the design:
 
-1. **leashd needs its own approval channel.** Native ask from a hook is missing in Codex, Gemini, OpenCode, Windsurf and Goose, and partial in Cursor. Where it is missing, the hook holds the call, leashd asks through the terminal console or the local web page, and the hook answers allow or deny before the agent's timeout.
-2. **Almost everything fails open by default.** leashd turns on every fail-closed option that exists, answers within its own deadline (shorter than the agent's timeout), and says honestly in the docs where an agent still fails open.
+1. **belayd needs its own approval channel.** Native ask from a hook is missing in Codex, Gemini, OpenCode, Windsurf and Goose, and partial in Cursor. Where it is missing, the hook holds the call, belayd asks through the terminal console or the local web page, and the hook answers allow or deny before the agent's timeout.
+2. **Almost everything fails open by default.** belayd turns on every fail-closed option that exists, answers within its own deadline (shorter than the agent's timeout), and says honestly in the docs where an agent still fails open.
 3. **Agents read each other's hooks.** Cursor (on by default) and Copilot CLI load Claude Code hooks from `.claude/settings*.json`. Our Claude Code hook will run inside them with different tool names. The hook must detect the host and handle or skip the call, and the audit log must deduplicate on (agent, session, tool call id).
 
 ## Claude Code
@@ -31,11 +31,11 @@ Status: first-class integration for v0.1. Source: [Hooks reference](https://code
 
 Command hooks declared in settings JSON. Claude Code spawns the command, writes one JSON object to stdin and reads the decision from stdout and the exit code. All matching hooks run in parallel.
 
-| Event | Use in leashd |
+| Event | Use in belayd |
 |---|---|
 | `PreToolUse` | The gate. Fires for every tool call (Bash, Write, Edit, Read, Glob, Grep, WebFetch, WebSearch, Agent, MCP tools, ...) before the permission prompt, including inside subagents. |
 | `PostToolUse` | Record the outcome, take the post-action snapshot, learn whether a delegated `ask` was approved. |
-| `PermissionRequest` | Fires when Claude Code is about to show its own prompt. In sessions that cannot prompt (background subagents in `-p` mode) the call is denied unless a hook decides. Useful for headless approval through the leashd web page. |
+| `PermissionRequest` | Fires when Claude Code is about to show its own prompt. In sessions that cannot prompt (background subagents in `-p` mode) the call is denied unless a hook decides. Useful for headless approval through the belayd web page. |
 | `SessionStart`, `SessionEnd` | Open and close the audit session. |
 
 ### Configuration
@@ -59,7 +59,7 @@ Hook entries merge across levels instead of replacing each other. `CLAUDE_CONFIG
         "hooks": [
           {
             "type": "command",
-            "command": "/abs/path/to/leashd",
+            "command": "/abs/path/to/belayd",
             "args": ["hook", "claude-code"],
             "timeout": 180,
             "onFailure": "block"
@@ -93,15 +93,15 @@ Common fields: `session_id`, `prompt_id`, `transcript_path`, `cwd`, `permission_
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "leashd: force push to main is blocked (rule no-force-push)"
+    "permissionDecisionReason": "belayd: force push to main is blocked (rule no-force-push)"
   }
 }
 ```
 
 - `permissionDecision`: `allow` skips the prompt, `deny` blocks, `ask` forces Claude Code's own prompt, `defer` only works in `-p` mode. With several hooks, precedence is deny > defer > ask > allow.
 - `permissionDecisionReason`: for `deny` it is shown to the model, so the agent learns why and can adapt. For `ask` it is shown to the user inside the native prompt.
-- `updatedInput` can rewrite the tool input. leashd does not use it in v0.1 (rewriting commands silently is surprising).
-- The user's own deny and ask rules are still evaluated after a hook `allow`, so leashd can never weaken the user's existing Claude Code permissions.
+- `updatedInput` can rewrite the tool input. belayd does not use it in v0.1 (rewriting commands silently is surprising).
+- The user's own deny and ask rules are still evaluated after a hook `allow`, so belayd can never weaken the user's existing Claude Code permissions.
 - `ask` from a hook also forces a prompt in auto mode.
 - The old top-level `decision: approve|block` is deprecated for `PreToolUse`.
 
@@ -109,24 +109,24 @@ Exit codes: 0 means the JSON applies. 2 blocks, and stderr becomes the reason. A
 
 ### Failure behaviour
 
-By default a hook that crashes, times out (default timeout 600 s), cannot start, or prints invalid JSON does not block: the call continues through the normal permission flow. Since v2.1.295, `"onFailure": "block"` on a command or HTTP hook turns every one of those failures into a block. leashd always sets it. For older versions we fall back to a shell wrapper that exits 2 on any failure.
+By default a hook that crashes, times out (default timeout 600 s), cannot start, or prints invalid JSON does not block: the call continues through the normal permission flow. Since v2.1.295, `"onFailure": "block"` on a command or HTTP hook turns every one of those failures into a block. belayd always sets it. For older versions we fall back to a shell wrapper that exits 2 on any failure.
 
 ### Gaps and caveats
 
-- `@file` references in the user's prompt are inserted without a tool call, so no hook sees them. Only Claude Code's own `Read` deny rules cover that path. `leashd init` can add matching deny rules for `.env` and key files.
-- A Claude Code "mod" that handles `tool.check` runs after hooks and can approve a call a `PreToolUse` hook blocked, unless the hook lives in managed settings. A team that needs leashd to be non-bypassable should install it through managed settings.
+- `@file` references in the user's prompt are inserted without a tool call, so no hook sees them. Only Claude Code's own `Read` deny rules cover that path. `belayd init` can add matching deny rules for `.env` and key files.
+- A Claude Code "mod" that handles `tool.check` runs after hooks and can approve a call a `PreToolUse` hook blocked, unless the hook lives in managed settings. A team that needs belayd to be non-bypassable should install it through managed settings.
 - `disableAllHooks` turns off user and project hooks.
 - MCP tools marked `requiresUserInteraction` still prompt even when a hook returns `allow`. That is fine for us.
 - Hooks are cooperative. They see the tool call, not what a script does after it starts. `python build.py` is evaluated as `python build.py`, not as the contents of `build.py`.
 
-### leashd strategy
+### belayd strategy
 
-1. `leashd init` writes hooks into `.claude/settings.local.json` by default (project scope, not committed, easy to remove), or `~/.claude/settings.json` with `--global`. It shows the diff first and keeps a backup.
+1. `belayd init` writes hooks into `.claude/settings.local.json` by default (project scope, not committed, easy to remove), or `~/.claude/settings.json` with `--global`. It shows the diff first and keeps a backup.
 2. One `PreToolUse` hook with matcher `*`, plus `PostToolUse`, `SessionStart` and `SessionEnd`.
-3. `ask` is delegated to Claude Code's native prompt with leashd's reason in it. In headless runs (`claude -p`) leashd holds the call and waits for the web approval page.
+3. `ask` is delegated to Claude Code's native prompt with belayd's reason in it. In headless runs (`claude -p`) belayd holds the call and waits for the web approval page.
 4. Contract tests replay recorded payloads per Claude Code version from `tests/fixtures/claude-code/`.
 
-5. **Host detection.** Cursor loads `.claude/settings*.json` hooks by default and maps tool names (Bash becomes Shell, Edit becomes Write), and Copilot CLI reads the repo's `.claude/settings*.json` too. The hook checks for `cursor_version` in the payload or `CURSOR_VERSION` in the environment (and the Copilot equivalents). If a native leashd integration is installed for that host, it does nothing. Otherwise it evaluates with the mapped tool names and resolves `ask` out of band, because Cursor does not enforce `ask` on `preToolUse`.
+5. **Host detection.** Cursor loads `.claude/settings*.json` hooks by default and maps tool names (Bash becomes Shell, Edit becomes Write), and Copilot CLI reads the repo's `.claude/settings*.json` too. The hook checks for `cursor_version` in the payload or `CURSOR_VERSION` in the environment (and the Copilot equivalents). If a native belayd integration is installed for that host, it does nothing. Otherwise it evaluates with the mapped tool names and resolves `ask` out of band, because Cursor does not enforce `ask` on `preToolUse`.
 
 Effort: about 3 to 4 days including tests, on top of the policy engine.
 
@@ -143,8 +143,8 @@ Lifecycle hooks, stable and on by default since v0.124 (23 Apr 2026). The contra
 - User: `~/.codex/hooks.json` or inline `[hooks]` in `~/.codex/config.toml`. `CODEX_HOME` relocates `~/.codex` (the directory must exist), which gives us an isolated config for tests.
 - Project: `<repo>/.codex/hooks.json` or `.codex/config.toml`, loaded only when the project's `.codex/` layer is trusted.
 - Managed: `/etc/codex/requirements.toml` with `allow_managed_hooks_only`.
-- All layers run. Matching hooks run concurrently, so leashd installs exactly one hook per event.
-- **Trust review:** non-managed hooks must be approved once in `/hooks`. Trust is tied to a hash of the hook definition, so leashd keeps its hook entry byte-identical across upgrades. `--dangerously-bypass-hook-trust` skips the review, which is what our CI uses.
+- All layers run. Matching hooks run concurrently, so belayd installs exactly one hook per event.
+- **Trust review:** non-managed hooks must be approved once in `/hooks`. Trust is tied to a hash of the hook definition, so belayd keeps its hook entry byte-identical across upgrades. `--dangerously-bypass-hook-trust` skips the review, which is what our CI uses.
 
 ### Contract
 
@@ -152,7 +152,7 @@ Input: `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `perm
 
 Output: the same `hookSpecificOutput` deny shape as Claude Code. `updatedInput` with `allow` works since v0.131.
 
-**`ask` is not supported.** From the docs: `permissionDecision: "ask"` and `continue: false` are "parsed but not supported yet. Codex marks the hook run as failed, reports the error, and continues the tool call." So leashd never sends `ask` to Codex. It resolves the question itself and answers `allow` or `deny`.
+**`ask` is not supported.** From the docs: `permissionDecision: "ask"` and `continue: false` are "parsed but not supported yet. Codex marks the hook run as failed, reports the error, and continues the tool call." So belayd never sends `ask` to Codex. It resolves the question itself and answers `allow` or `deny`.
 
 `PermissionRequest` fires only when Codex itself would prompt (sandbox escalation, network, a rules `prompt`). A hook can answer allow or deny there, and if it says nothing Codex shows its own prompt.
 
@@ -160,14 +160,14 @@ Output: the same `hookSpecificOutput` deny shape as Claude Code. `updatedInput` 
 
 - Shell and unified exec as `Bash`, file edits as `apply_patch` (matchable as `Edit|Write`), MCP tools, and local function tools. Hosted WebSearch is not covered. File reads happen through shell commands, so read rules come from shell parsing.
 - A `PreToolUse` error, timeout or malformed response fails open. The docs also say some specialised tool paths can skip hooks. Codex calls hooks "a useful guardrail, not a complete enforcement boundary", and so do we.
-- `apply_patch` input is a patch envelope (`*** Update File:`, `*** Add File:`, `*** Delete File:`, `*** Move to:`). leashd parses it to get target paths for write rules and pre-edit snapshots.
+- `apply_patch` input is a patch envelope (`*** Update File:`, `*** Add File:`, `*** Delete File:`, `*** Move to:`). belayd parses it to get target paths for write rules and pre-edit snapshots.
 - Native layers worth composing with: sandbox modes (`read-only`, `workspace-write` default, `danger-full-access`), Starlark `.rules` with `prefix_rule` (allow, prompt, forbidden), per-tool MCP approval modes. `approval_policy = "untrusted"` was retired in v0.149.
 
-### leashd strategy
+### belayd strategy
 
-1. `leashd init` writes one entry per event into `~/.codex/hooks.json` (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, `SessionEnd`) running `leashd hook codex`, then walks the user through the one-time `/hooks` trust step.
-2. `ask` becomes a held call: leashd asks through its console or web page, and answers `deny` itself if nobody responds before its deadline, which is set below the hook timeout.
-3. Optional later: compile prefix-style leashd rules into `~/.codex/rules/leashd.rules` with `decision = "prompt"` to get Codex's native prompt for simple cases.
+1. `belayd init` writes one entry per event into `~/.codex/hooks.json` (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, `SessionEnd`) running `belayd hook codex`, then walks the user through the one-time `/hooks` trust step.
+2. `ask` becomes a held call: belayd asks through its console or web page, and answers `deny` itself if nobody responds before its deadline, which is set below the hook timeout.
+3. Optional later: compile prefix-style belayd rules into `~/.codex/rules/belayd.rules` with `decision = "prompt"` to get Codex's native prompt for simple cases.
 4. Recommend `workspace-write` as the sandbox in our docs.
 5. E2E tests drive `codex exec --dangerously-bypass-hook-trust` with `CODEX_HOME` pointing at a temp dir.
 
@@ -195,7 +195,7 @@ Sources: [Hooks](https://geminicli.com/docs/hooks/), [Hooks reference](https://g
 - Non-zero exits other than 2 and polluted stdout fail open.
 - Has its own `/restore` checkpointing (shadow Git repo, off by default).
 
-Strategy: `BeforeTool` and `AfterTool` hooks running `leashd hook gemini`, out-of-band approval for ask, optional compile of ask rules into `~/.gemini/policies/leashd.toml`. Effort: 3 to 5 days plus 2 days E2E.
+Strategy: `BeforeTool` and `AfterTool` hooks running `belayd hook gemini`, out-of-band approval for ask, optional compile of ask rules into `~/.gemini/policies/belayd.toml`. Effort: 3 to 5 days plus 2 days E2E.
 
 ## OpenCode
 
@@ -204,7 +204,7 @@ Sources: [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://ope
 - In-process TypeScript plugins. `tool.execute.before` can block by throwing and can rewrite arguments by mutating `output.args` in place. Plugins cannot ask: `permission.ask` is declared but never called (issue #47674). Native ask exists only in the `permission` config.
 - Several open bugs where plugin hooks are bypassed or throws are swallowed, and a V2 plugin API in progress. Expect churn.
 
-Strategy: a small `@leashd/opencode` plugin that calls leashd and throws on deny or when leashd is unreachable, so it fails closed by construction. Effort: 4 to 6 days plus ongoing maintenance.
+Strategy: a small `@belayd/opencode` plugin that calls belayd and throws on deny or when belayd is unreachable, so it fails closed by construction. Effort: 4 to 6 days plus ongoing maintenance.
 
 ## Others
 
@@ -224,16 +224,16 @@ Claude Code, Codex and Cursor hooks already see MCP tool calls, so for those age
 
 The current revision is 2026-07-28. It is stateless (no `initialize` handshake, no session id), replaces server-initiated requests such as `elicitation/create` with multi round-trip results (`resultType: "input_required"`), and adds `Mcp-Method` and `Mcp-Name` headers on HTTP. Most deployed clients still speak 2025-06-18 or 2025-11-25, so the proxy must handle both eras. `tools/call` has the same name in both.
 
-### Design: `leashd mcp --name <id> -- <original command>`
+### Design: `belayd mcp --name <id> -- <original command>`
 
 1. Spawn the real server and relay newline-delimited JSON-RPC both ways, forwarding stderr, exit codes and signals.
 2. Intercept `tools/call`, evaluate `params.name` and `params.arguments` as an `mcp` action.
-3. On deny, answer locally with a normal result carrying `isError: true` and a text block `Blocked by leashd: <reason>`, so the model sees why and can adapt.
-4. On ask, use leashd's out-of-band approval. MCP elicitation is an optional extra: support is uneven across clients, and Codex can route elicitations to an AI reviewer, so it is not a reliable human channel.
+3. On deny, answer locally with a normal result carrying `isError: true` and a text block `Blocked by belayd: <reason>`, so the model sees why and can adapt.
+4. On ask, use belayd's out-of-band approval. MCP elicitation is an optional extra: support is uneven across clients, and Codex can route elicitations to an AI reviewer, so it is not a reliable human channel.
 5. Optionally hide denied tools from `tools/list` and refresh on `notifications/tools/list_changed`.
 6. Audit every call, correlating request and response by id.
 
-`leashd init` rewrites each agent's MCP config to run servers through the gateway (`command: "leashd"`, `args: ["mcp", "--name", "X", "--", ...original]`), idempotently and with a backup, and `leashd uninstall` reverses it. Servers bundled inside plugins or extensions cannot be wrapped, so they rely on agent hooks.
+`belayd init` rewrites each agent's MCP config to run servers through the gateway (`command: "belayd"`, `args: ["mcp", "--name", "X", "--", ...original]`), idempotently and with a backup, and `belayd uninstall` reverses it. Servers bundled inside plugins or extensions cannot be wrapped, so they rely on agent hooks.
 
 ### Scope for v0.1
 
@@ -243,7 +243,7 @@ Effort: stdio proxy with policy and audit 5 to 7 days, legacy elicitation 2 to 3
 
 ## Recommendation: second agent
 
-**Codex CLI.** Its hook contract is almost the Claude Code dialect, so most of the adapter is shared. It covers shell, file edits and MCP, it has been stable since April 2026, it is open source so we can read the code when docs are unclear, and it runs headless in CI. Its weak spots (no `ask`, fail-open on errors, the trust step) are exactly what leashd's out-of-band approval and own deadline are built to cover, which makes it a good showcase.
+**Codex CLI.** Its hook contract is almost the Claude Code dialect, so most of the adapter is shared. It covers shell, file edits and MCP, it has been stable since April 2026, it is open source so we can read the code when docs are unclear, and it runs headless in CI. Its weak spots (no `ask`, fail-open on errors, the trust step) are exactly what belayd's out-of-band approval and own deadline are built to cover, which makes it a good showcase.
 
 Cursor is the strong third choice: large user base, native ask for shell and MCP, and `failClosed`. It is closed source with known parity bugs, and since it already runs Claude Code hooks, v0.1 gets partial Cursor coverage through host detection anyway.
 
