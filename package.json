@@ -1,0 +1,74 @@
+{
+  "name": "belayd",
+  "version": "0.0.0",
+  "description": "One policy, one audit trail and one undo button for every AI coding agent.",
+  "keywords": [
+    "ai",
+    "agents",
+    "claude-code",
+    "codex",
+    "cursor",
+    "guardrails",
+    "policy",
+    "hooks",
+    "undo",
+    "audit",
+    "security"
+  ],
+  "homepage": "https://github.com/albert-canfield/belayd#readme",
+  "bugs": "https://github.com/albert-canfield/belayd/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/albert-canfield/belayd.git"
+  },
+  "license": "MIT",
+  "author": "Albert Canfield",
+  "type": "module",
+  "bin": {
+    "belayd": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "presets"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "packageManager": "pnpm@10.10.0",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "node scripts/bench-hook.mjs",
+    "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "picocolors": "1.1.1",
+    "picomatch": "4.0.7",
+    "unbash": "5.1.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "^22.20.5",
+    "@types/picomatch": "4.0.3",
+    "eslint": "10.12.0",
+    "prettier": "3.9.10",
+    "tsup": "8.5.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
+    "vitest": "5.0.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
