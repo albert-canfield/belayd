@@ -59,6 +59,50 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('log')
+    .description('Show what agents did in this project and what belayd decided')
+    .option('--all', 'every project, not just this one')
+    .option('--session <id>', 'one session only')
+    .option('--limit <n>', 'how many events', '50')
+    .option('--verify', 'check that no event was changed or removed')
+    .option('--json', 'print events as JSON')
+    .action(async (opts) => {
+      const { log } = await import('./audit.js');
+      process.exitCode = await log(opts);
+    });
+
+  program
+    .command('sessions')
+    .description('List agent sessions belayd has seen')
+    .option('--all', 'every project, not just this one')
+    .option('--limit <n>', 'how many sessions', '20')
+    .option('--json', 'print sessions as JSON')
+    .action(async (opts) => {
+      const { sessions } = await import('./audit.js');
+      process.exitCode = await sessions(opts);
+    });
+
+  program
+    .command('replay')
+    .description('Replay a session as a readable timeline (default: the latest in this project)')
+    .argument('[session]', 'session id, or the first few characters of it')
+    .option('--all', 'pick the latest session from any project')
+    .option('--json', 'print the raw events as JSON')
+    .action(async (id: string | undefined, opts) => {
+      const { replay } = await import('./audit.js');
+      process.exitCode = await replay(id, opts);
+    });
+
+  program
+    .command('gc')
+    .description('Delete audit events older than a number of days')
+    .option('--older-than <days>', 'for example 30d', '30d')
+    .action(async (opts) => {
+      const { gc } = await import('./audit.js');
+      process.exitCode = await gc(opts);
+    });
+
+  program
     .command('approve')
     .description('Answer agents waiting for your approval (live console)')
     .argument('[id]', 'answer one request directly, with --allow or --deny')

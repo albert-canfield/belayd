@@ -7,7 +7,7 @@ import {
   claudeTarget,
   detectClaudeVersion,
   excludeFromGit,
-  hookHandler,
+  belaydHooks,
   ON_FAILURE_MIN_VERSION,
   readSettings,
   supportsOnFailure,
@@ -55,7 +55,8 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
     env: process.env,
   });
   const claudeVersion = opts.claudeVersion ?? detectClaudeVersion();
-  const handler = hookHandler({ nodePath: process.execPath, binPath, claudeVersion });
+  const hooks = belaydHooks({ nodePath: process.execPath, binPath, claudeVersion });
+  const handler = hooks.PreToolUse!;
   const policyFile = opts.global
     ? path.join(belaydHome(), POLICY_FILE)
     : path.join(workspace, POLICY_FILE);
@@ -63,7 +64,7 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
 
   console.log(pc.bold('belayd will:'));
   console.log(
-    `  1. Add a PreToolUse hook for Claude Code to ${pc.cyan(tilde(target.settingsFile))}` +
+    `  1. Add Claude Code hooks (PreToolUse, PostToolUse) to ${pc.cyan(tilde(target.settingsFile))}` +
       (target.scope === 'project'
         ? pc.dim(' (this project only, not committed)')
         : pc.dim(' (every project)')),
@@ -74,7 +75,9 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
       : `  2. Keep your existing ${pc.cyan(tilde(policyFile))}`,
   );
   console.log('');
-  console.log(pc.dim('  The hook:'));
+  console.log(
+    pc.dim('  The PreToolUse hook (PostToolUse runs the same command to record results):'),
+  );
   for (const line of JSON.stringify(handler, null, 2).split('\n'))
     console.log(pc.dim(`    ${line}`));
   console.log('');
@@ -104,7 +107,7 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   }
 
   const settings = readSettings(target.settingsFile);
-  const backup = writeSettings(target.settingsFile, withBelaydHook(settings, handler));
+  const backup = writeSettings(target.settingsFile, withBelaydHook(settings, hooks));
   if (target.scope === 'project') excludeFromGit(workspace, target.settingsFile);
   if (writePolicy) {
     fs.mkdirSync(path.dirname(policyFile), { recursive: true });

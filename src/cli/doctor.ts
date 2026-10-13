@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import pc from 'picocolors';
 import { listPending } from '../approval/store.js';
+import { AuditLog } from '../audit/db.js';
 import { readUiState } from '../approval/ui-state.js';
 import {
   claudeConfigDir,
@@ -89,6 +90,26 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
   }
   if (installed === 0) line('warn', 'No belayd hook found for Claude Code', 'Run: belayd init');
 
+  if (AuditLog.exists(state)) {
+    try {
+      const db = await AuditLog.open(state, { readOnly: true });
+      const [latest] = db.events({ limit: 1 });
+      const sessions = db.sessions().length;
+      db.close();
+      line(
+        'ok',
+        `Audit log: ${sessions} sessions${latest ? `, last event ${new Date(latest.at).toLocaleString()}` : ''}`,
+      );
+    } catch (err) {
+      line('fail', 'Audit log cannot be read', (err as Error).message);
+    }
+  } else {
+    line('ok', 'Audit log: empty so far');
+  }
+  const errors = recentErrors(state);
+  if (errors.length > 0)
+    line('warn', `Recent belayd errors (${path.join(state, 'errors.log')})`, errors.join('\n  '));
+
   const pending = listPending(state);
   const page = readUiState(state);
   line(
@@ -146,4 +167,14 @@ function pathsInShellCommand(command: string): string[] {
 function tilde(p: string): string {
   const home = os.homedir();
   return p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
+}
+
+function recentErrors(home: string): string[] {
+  try {
+    const lines = fs.readFileSync(path.join(home, 'errors.log'), 'utf8').trim().split('\n');
+    const dayAgo = Date.now() - 86_400_000;
+    return lines.filter((l) => Date.parse(l.slice(0, 24)) > dayAgo).slice(-3);
+  } catch {
+    return [];
+  }
 }
