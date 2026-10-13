@@ -1,8 +1,9 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml } from 'yaml';
-import { formatIssues, PolicySchema, type PolicyFile, type Rule } from './schema.js';
+import { version } from '../version.js';
+import type { Rule } from './schema.js';
 
 export const POLICY_FILE = 'belayd.yaml';
 export const DEFAULT_PRESET = 'balanced';
@@ -45,6 +46,8 @@ export interface LoadOptions {
   policyPath?: string;
   /** Use this preset and ignore policy files. */
   preset?: string;
+  /** Skip the compiled-policy cache (tests, `belayd doctor`). */
+  noCache?: boolean;
 }
 
 /** Finds the policy for a workspace: ./belayd.yaml, then $BELAYD_HOME/belayd.yaml, then the default preset. */
@@ -55,109 +58,56 @@ export function findPolicyFile(workspace: string, belaydHome: string): string | 
   return undefined;
 }
 
-export function loadPolicy(opts: LoadOptions): CompiledPolicy {
-  if (opts.preset) return compile(undefined, undefined, opts.preset);
-  const file = opts.policyPath ?? findPolicyFile(opts.workspace, opts.belaydHome);
-  if (!file) return compile(undefined, undefined, DEFAULT_PRESET);
-  const user = readPolicyFile(file);
-  return compile(user, file, user.extends ?? DEFAULT_PRESET);
-}
+/**
+ * Loads the policy for a workspace. Parsing YAML and validating it costs tens of
+ * milliseconds, which matters when a hook runs on every tool call, so the compiled
+ * result is cached under $BELAYD_HOME/cache, keyed by a hash of every input file.
+ */
+export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
+  const file = opts.preset
+    ? undefined
+    : (opts.policyPath ?? findPolicyFile(opts.workspace, opts.belaydHome));
 
-export function readPolicyFile(file: string): PolicyFile {
-  let text: string;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    throw new PolicyError(`cannot read the policy file (${(err as Error).message})`, file);
-  }
-  return parsePolicy(text, file);
-}
-
-export function parsePolicy(text: string, file?: string): PolicyFile {
-  let data: unknown;
-  try {
-    data = parseYaml(text);
-  } catch (err) {
-    throw new PolicyError(`not valid YAML: ${(err as Error).message}`, file);
-  }
-  const result = PolicySchema.safeParse(data ?? {});
-  if (!result.success) throw new PolicyError(`invalid policy\n${formatIssues(result.error)}`, file);
-  return result.data;
-}
-
-function compile(
-  user: PolicyFile | undefined,
-  userFile: string | undefined,
-  presetName: string,
-): CompiledPolicy {
-  const chain = presetName === 'none' ? [] : loadPresetChain(presetName);
-  const presetRules = new Map<string, Rule>();
-  let defaultVerdict: CompiledPolicy['default'] = 'pass';
-  const disabled = new Set<string>();
-  let approval: PolicyFile['approval'] = {};
-  let failMode: PolicyFile['failMode'];
-  for (const p of chain) {
-    for (const r of p.rules) presetRules.set(r.id, r);
-    for (const id of p.disable) presetRules.delete(id);
-    if (p.default) defaultVerdict = p.default;
-    approval = { ...approval, ...p.approval };
-    failMode = p.failMode ?? failMode;
-  }
-
-  if (user) {
-    if (user.default) defaultVerdict = user.default;
-    for (const id of user.disable) {
-      if (!presetRules.has(id)) {
-        throw new PolicyError(
-          `disable: there is no rule "${id}" in the ${presetName} preset`,
-          userFile,
-        );
-      }
-      disabled.add(id);
-    }
-    approval = { ...approval, ...user.approval };
-    failMode = user.failMode ?? failMode;
-    const seen = new Set<string>();
-    for (const r of user.rules) {
-      if (seen.has(r.id)) throw new PolicyError(`rule id "${r.id}" is used twice`, userFile);
-      seen.add(r.id);
-      if (r.final)
-        throw new PolicyError(`rule "${r.id}": only presets can mark rules as final`, userFile);
+  const key = opts.noCache ? undefined : cacheKey(file, opts.preset);
+  const cacheFile = key ? path.join(opts.belaydHome, 'cache', `policy-${key}.json`) : undefined;
+  if (cacheFile) {
+    try {
+      return JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as CompiledPolicy;
+    } catch {
+      // not cached yet
     }
   }
 
-  const active = [...presetRules.values()].filter((r) => !disabled.has(r.id));
-  return {
-    name: userFile ? `${presetName} preset + ${userFile}` : `${presetName} preset`,
-    preset: presetName,
-    files: userFile ? [userFile] : [],
-    default: defaultVerdict,
-    rules: {
-      final: active.filter((r) => r.final).map((r) => ({ ...r, layer: 'final' })),
-      user: (user?.rules ?? []).map((r) => ({ ...r, layer: 'user' })),
-      preset: active.filter((r) => !r.final).map((r) => ({ ...r, layer: 'preset' })),
-    },
-    disabled: [...disabled],
-    approval: {
-      timeoutMs: toMs(approval?.timeout ?? '120s'),
-      onTimeout: approval?.onTimeout ?? 'deny',
-      channels: approval?.channels ?? ['native', 'web'],
-    },
-    failMode: failMode ?? 'closed',
-  };
+  const { compileFromFile } = await import('./compile.js');
+  const policy = compileFromFile(file, opts.preset);
+  if (cacheFile) writeCache(cacheFile, policy);
+  return policy;
 }
 
-/** A preset and the presets it extends, base first. */
-function loadPresetChain(name: string, seen: string[] = []): PolicyFile[] {
-  if (seen.includes(name))
-    throw new PolicyError(`presets extend each other in a loop: ${[...seen, name].join(' -> ')}`);
-  const file = path.join(presetsDir(), `${name}.yaml`);
-  if (!fs.existsSync(file)) {
-    throw new PolicyError(`unknown preset "${name}". Available: ${listPresets().join(', ')}`);
+function cacheKey(file: string | undefined, preset: string | undefined): string | undefined {
+  try {
+    const hash = crypto.createHash('sha256');
+    hash.update(`${version}\0${preset ?? ''}\0${file ?? ''}\0`);
+    if (file) hash.update(fs.readFileSync(file));
+    const dir = presetsDir();
+    for (const name of fs.readdirSync(dir).sort()) {
+      if (name.endsWith('.yaml')) hash.update(name).update(fs.readFileSync(path.join(dir, name)));
+    }
+    return hash.digest('hex').slice(0, 24);
+  } catch {
+    return undefined; // unreadable file: compile without the cache and report the real error
   }
-  const preset = readPolicyFile(file);
-  const parent = preset.extends ? loadPresetChain(preset.extends, [...seen, name]) : [];
-  return [...parent, preset];
+}
+
+function writeCache(file: string, policy: CompiledPolicy): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(policy));
+    fs.renameSync(tmp, file);
+  } catch {
+    // a read-only BELAYD_HOME only costs speed, never correctness
+  }
 }
 
 export function listPresets(): string[] {
@@ -181,11 +131,4 @@ export function presetsDir(): string {
     dir = path.dirname(dir);
   }
   throw new PolicyError('cannot find the presets folder. Is the belayd installation complete?');
-}
-
-function toMs(v: number | string): number {
-  if (typeof v === 'number') return v * 1000;
-  const m = /^(\d+)(ms|s|m)$/.exec(v)!;
-  const n = Number(m[1]);
-  return m[2] === 'ms' ? n : m[2] === 's' ? n * 1000 : n * 60_000;
 }
