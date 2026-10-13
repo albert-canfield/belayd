@@ -91,7 +91,7 @@ Regex on the raw command string is the main weakness of existing hook packs. bel
   - pipelines into interpreters (`curl ... | sh`, `base64 -d | bash`, `| python`) are their own pattern
   - a command name that cannot be resolved statically (`$X -rf /`, `$(echo rm)`) becomes `ask` with the reason "dynamic command"
   - parse errors become `ask` (balanced) or `deny` (strict)
-- Interpreter one-liners (`python -c`, `node -e`, `perl -e`) are `ask` in balanced. We cannot reason about arbitrary code and will say so.
+- Interpreter one-liners (`python -c`, `node -e`, `perl -e`) are flagged as inline code. Balanced lets the agent's own permissions decide (agents use them constantly for small calculations, and asking every time would teach people to turn belayd off); strict asks. We cannot reason about arbitrary code and say so in the threat model.
 - **Write-then-execute.** The best objection to command allowlists is "allow `npm test` and the agent edits `package.json` to run anything". belayd sees both halves. It keeps the set of paths written in the current session, and when a command runs one of them (`./x.sh`, `bash x.sh`, `python x.py`) or is driven by one (`npm run` or `npm test` after a `package.json` write, `make` after a `Makefile` write, `git commit` after a hook file under `.git/hooks` changes), the verdict is raised to at least `ask` with a reason naming the file. Nobody in `docs/landscape.md` does this.
 
 ### 2.3 Policy file
@@ -129,9 +129,12 @@ Match keys (all optional, all must match): `tool` (canonical kind or agent tool 
 Evaluation:
 1. Normalise the action. For shell, expand into invocations and evaluate each.
 2. User rules first. If any user rule matches, the most severe matching user verdict wins.
-3. Otherwise preset rules, most severe wins. Preset rules marked `final` can only be removed through `disable`, which is logged with the policy hash.
-4. Otherwise the preset default: `pass` in balanced, `ask` in strict, `allow` in yolo-with-undo. `pass` means belayd logs the call and returns no decision, so the agent's own permission system decides as it did before. This matters: in Claude Code a hook `allow` skips the native permission prompt, so a blanket `allow` would make installing belayd reduce your safety. belayd only says `allow` when a rule explicitly says so.
-5. Secret findings on outgoing content raise the verdict to at least `ask` (`deny` in strict).
+3. Otherwise preset rules, most severe wins.
+4. Preset rules marked `final` are a floor: they always apply, a user rule cannot lower them, and a stricter rule from either layer still wins over them. The only way around one is `disable: [id]` in `belayd.yaml`, which is visible and logged.
+5. Otherwise the preset default: `pass` in balanced, `ask` in strict, `allow` in yolo-with-undo. `pass` means belayd logs the call and returns no decision, so the agent's own permission system decides as it did before. This matters: in Claude Code a hook `allow` skips the native permission prompt, so a blanket `allow` would make installing belayd reduce your safety. belayd only says `allow` when a rule explicitly says so.
+6. Secret findings on outgoing content are a normal rule (`secrets: true`), `ask` in balanced and `deny` in strict.
+
+Across the parts of one shell command the order is deny > ask > pass > allow, so one unchecked part never inherits an explicit `allow` from its neighbour.
 
 Presets:
 | | strict | balanced (default) | yolo-with-undo |
@@ -144,7 +147,13 @@ Presets:
 | Write outside workspace | deny | ask | ask |
 | Secrets in outgoing content | deny | ask | ask |
 | Network to unknown domains | ask | allow | allow |
+| Inline interpreter code (`python -c`) | ask | pass | allow |
+| Reading inside the project, read-only commands | allow | pass | allow |
+| Any write | ask | pass, outside the project ask | allow, outside the project ask |
+| Changes to belayd's policy or agent hook settings | ask (final) | ask (final) | ask (final) |
 | Snapshots before writes | on | on | on (the point of the preset) |
+
+The last row is self-protection: an agent that tries to edit `belayd.yaml`, `$BELAYD_HOME` or any agent's hook settings is always asked about it, so it cannot quietly switch belayd off.
 
 ### 2.4 Secret detection
 
@@ -192,12 +201,14 @@ Large repos: OpenCode's Git snapshots are known to be slow on big repos and subm
 
 ### 2.8 Hook performance
 
-Target from the handover: under 100 ms overhead per call. Bare Node startup on this machine is already about 60 ms, so the budget is tight.
-- The hook entry point is a separate tsup bundle with only the hot path. SQLite, the approval UI and the snapshot code are loaded lazily.
-- `module.enableCompileCache()` on Node 22.1+ (no-op on Node 20).
-- Policy is compiled once and cached as JSON keyed by file hash.
-- `scripts/bench-hook.mjs` runs 100 hook calls per scenario and CI fails if p50 is above 100 ms. We report p50 and p95 in the README.
-- If we miss the budget: an optional resident process (`belayd daemon`) on a Unix socket that keeps the policy and database warm. Not in v0.1 unless needed.
+Target from the handover: under 100 ms overhead per call.
+
+Measured in M2 (M-series Mac, Node 22): bare `node -e ''` is 36 to 40 ms, a full hook call is 59 to 75 ms at p50, so belayd adds 18 to 32 ms. The first version took 120 to 135 ms; two changes fixed it:
+- **Compiled-policy cache.** YAML parsing and zod validation cost about 60 ms of imports. The compiled policy is cached as JSON under `$BELAYD_HOME/cache`, keyed by a SHA-256 of the policy file, every preset file and the belayd version, so any edit is picked up and the hot path reads one JSON file. The parser and validator live in a separate chunk loaded only on a cache miss.
+- **Everything bundled.** All dependencies are bundled into a few chunks, so a hook call does not resolve anything in `node_modules`. The published package has no runtime dependencies (about 270 KB packed).
+- Plus `module.enableCompileCache()`.
+
+`scripts/bench-hook.mjs` measures four scenarios and reports p50, p95 and overhead over bare Node. CI fails if the overhead is above 100 ms. A resident daemon is not needed.
 
 ### 2.9 Failing safe
 
@@ -258,7 +269,7 @@ tests/            policy tables, adapter contract fixtures, e2e undo, bench
 - **Undo end to end**: temp repo, simulated agent edits and shell writes, undo by step and by session, byte-for-byte comparison. Non-Git folder variant.
 - **Fail-safe tests**: corrupt policy, unreadable database, thrown errors, missing binary; each must block.
 - **Bench**: hook latency in CI as above.
-- **CI**: GitHub Actions, Node 20 and 22, ubuntu-latest and macos-latest. Lint, typecheck, test, bench, `npm pack` smoke test that runs `npx ./belayd-*.tgz check 'rm -rf /'`.
+- **CI**: GitHub Actions, Node 22 and 24, ubuntu-latest and macos-latest. Lint, typecheck, format, test, bench, and an `npm pack` smoke test that runs the tarball through `npx`. Node 20 reached end of life on 30 Apr 2026 and current tooling (vitest 5, better-sqlite3 13, commander 15) needs Node 22, so `engines` is `>=22.12`.
 
 ## 5. Milestones
 
