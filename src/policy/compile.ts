@@ -8,6 +8,7 @@ import {
   presetsDir,
   type CompiledPolicy,
 } from './load.js';
+import { DEFAULT_PORT } from '../approval/ui-state.js';
 import { formatIssues, PolicySchema, type PolicyFile, type Rule } from './schema.js';
 
 /**
@@ -102,7 +103,9 @@ export function compile(
     approval: {
       timeoutMs: toMs(approval?.timeout ?? '120s'),
       onTimeout: approval?.onTimeout ?? 'deny',
-      channels: approval?.channels ?? ['native', 'web'],
+      channels: approval?.channels ?? ['native', 'tty', 'web'],
+      notify: approval?.notify ?? true,
+      port: approval?.port ?? DEFAULT_PORT,
     },
     failMode: failMode ?? 'closed',
   };

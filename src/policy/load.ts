@@ -25,7 +25,10 @@ export interface CompiledPolicy {
   approval: {
     timeoutMs: number;
     onTimeout: 'deny' | 'allow';
+    /** native = the agent's own prompt; tty = `belayd approve`; web = the local page. */
     channels: ('native' | 'tty' | 'web')[];
+    notify: boolean;
+    port: number;
   };
   failMode: 'closed' | 'open';
 }
