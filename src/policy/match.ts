@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import picomatch from 'picomatch';
 import { findSecrets, loadEnvValues } from '../secrets/detect.js';
+import { canonicalPath } from '../util/paths.js';
 import type { Match } from './schema.js';
 import type { Subject } from './subjects.js';
 import type { ActionContext, ActionKind } from './types.js';
@@ -125,12 +126,13 @@ function placeholders(env: MatchEnv): Record<string, string[]> {
     '/private/var/folders',
     toPosix(os.tmpdir()),
   ]);
+  const both = (p: string) => [...new Set([toPosix(p), toPosix(canonicalPath(p))])];
   return {
-    workspace: [toPosix(env.ctx.workspace)],
-    cwd: [toPosix(env.ctx.cwd)],
-    home: [toPosix(env.ctx.home)],
+    workspace: both(env.ctx.workspace),
+    cwd: both(env.ctx.cwd),
+    home: both(env.ctx.home),
     tmp: [...tmp],
-    belayd_home: [toPosix(env.belaydHome)],
+    belayd_home: both(env.belaydHome),
   };
 }
 

@@ -3,7 +3,7 @@ import pc from 'picocolors';
 import { evaluate } from '../policy/engine.js';
 import { loadPolicy } from '../policy/load.js';
 import type { Action, ActionContext, Decision, Verdict } from '../policy/types.js';
-import { belaydHome, findWorkspace, homeDir } from '../util/paths.js';
+import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 
 export interface CheckOptions {
   read?: string;
@@ -22,7 +22,7 @@ export async function check(commandWords: string[], opts: CheckOptions): Promise
     console.error('Give a command to check, for example: belayd check "rm -rf ~"');
     return 64;
   }
-  const cwd = path.resolve(opts.cwd ?? process.cwd());
+  const cwd = canonicalPath(opts.cwd ?? process.cwd());
   const workspace = findWorkspace(cwd);
   const state = belaydHome();
   const policy = await loadPolicy({
@@ -31,7 +31,7 @@ export async function check(commandWords: string[], opts: CheckOptions): Promise
     ...(opts.policy ? { policyPath: path.resolve(opts.policy) } : {}),
     ...(opts.preset ? { preset: opts.preset } : {}),
   });
-  const ctx: ActionContext = { agent: 'cli', cwd, workspace, home: homeDir() };
+  const ctx: ActionContext = { agent: 'cli', cwd, workspace, home: canonicalPath(homeDir()) };
   const decision = evaluate(action, ctx, policy, { belaydHome: state });
 
   if (opts.json) {

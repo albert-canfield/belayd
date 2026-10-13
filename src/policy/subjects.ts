@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { canonicalPath } from '../util/paths.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
 
@@ -133,11 +134,11 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
     }
     case 'read': {
       const p = absolute(action.path, ctx);
-      return [{ ...empty('read', ctx, action.path), paths: [p], reads: [p] }];
+      return [{ ...empty('read', ctx, action.path), paths: p, reads: p }];
     }
     case 'write': {
       const p = absolute(action.path, ctx);
-      return [{ ...empty('write', ctx, action.path), paths: [p], writes: [p] }];
+      return [{ ...empty('write', ctx, action.path), paths: p, writes: p }];
     }
     case 'fetch':
       return [
@@ -197,10 +198,14 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
       unresolved = true;
       return out;
     }
-    out.push(full);
     // `rm -rf /*` deletes everything in `/`, so the folder before the first glob counts too.
     const glob = full.search(GLOB_CHARS);
-    if (glob >= 0) out.push(path.dirname(full.slice(0, glob + 1)));
+    if (glob >= 0) {
+      out.push(full);
+      out.push(...bothForms(path.dirname(full.slice(0, glob + 1))));
+    } else {
+      out.push(...bothForms(full));
+    }
     return out;
   };
 
@@ -330,8 +335,18 @@ export function domainsIn(text: string): string[] {
   return out;
 }
 
-function absolute(p: string, ctx: ActionContext): string {
-  return resolveIn(ctx.cwd, p, ctx.home) ?? path.resolve(ctx.cwd, p);
+/**
+ * A path as written and as it really is on disk (symlinks resolved). Rules match if
+ * either form matches, so `/etc` is still `/etc` on macOS (really /private/etc), and a
+ * symlink in the project that points into ~/.ssh is judged as ~/.ssh.
+ */
+function bothForms(p: string): string[] {
+  const real = canonicalPath(p);
+  return real === p ? [p] : [p, real];
+}
+
+function absolute(p: string, ctx: ActionContext): string[] {
+  return bothForms(resolveIn(ctx.cwd, p, ctx.home) ?? path.resolve(ctx.cwd, p));
 }
 
 function empty(kind: ActionKind, ctx: ActionContext, label: string): Subject {
