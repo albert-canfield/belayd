@@ -23,8 +23,8 @@ describe('belayd init and uninstall for Claude Code', () => {
     expect(h).toEqual({
       type: 'command',
       command: process.execPath,
-      args: [fs.realpathSync(bin), 'hook', 'claude-code'],
-      timeout: 30,
+      args: [fs.realpathSync(bin), 'hook', 'claude-code', '--timeout', '180'],
+      timeout: 180,
       onFailure: 'block',
     });
     expect(fs.existsSync(path.join(sb.project, 'belayd.yaml'))).toBe(true);
@@ -49,7 +49,7 @@ describe('belayd init and uninstall for Claude Code', () => {
     const [h] = handlers(projectSettings());
     expect(h.args).toBeUndefined();
     expect(h.onFailure).toBeUndefined();
-    expect(h.command).toMatch(/hook claude-code \|\| \{ .* exit 2; \}$/);
+    expect(h.command).toMatch(/hook claude-code --timeout 180 \|\| \{ .* exit 2; \}$/);
     // The guard turns a crash into exit 2. Simulate a crash with a missing script.
     const broken = h.command.replace(fs.realpathSync(bin).replace(/'/g, ''), '/nonexistent/bin.js');
     const r = spawnSync('sh', ['-c', broken], { input: '{}', env: sb.env, encoding: 'utf8' });

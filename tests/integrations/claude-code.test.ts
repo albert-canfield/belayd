@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { decide, listPending } from '../../src/approval/store.js';
 import { handleClaudeCode, toAction } from '../../src/integrations/claude-code/hook.js';
 
 let workspace: string;
@@ -131,13 +132,73 @@ describe('Claude Code hook output', () => {
     expect(r.stdout).toMatch(/belayd doctor/);
   });
 
-  it('turns ask into deny inside Cursor, which does not enforce ask from this hook', async () => {
-    const r = await call({
-      tool_name: 'Shell',
-      tool_input: { command: 'sudo ls' },
-      cursor_version: '2.5.0',
+  describe('when the agent cannot ask', () => {
+    const quietApprovals = () =>
+      fs.writeFileSync(
+        path.join(workspace, 'belayd.yaml'),
+        'version: 1\napproval: { channels: [native, tty], notify: false, timeout: 30s }\n',
+      );
+
+    const answerWhenAsked = async (decision: 'allow' | 'deny') => {
+      for (let i = 0; i < 100; i++) {
+        const [req] = listPending(env.BELAYD_HOME!);
+        if (req) return decide(env.BELAYD_HOME!, req.id, decision, 'test');
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      throw new Error('no approval request appeared');
+    };
+
+    it('holds a headless Claude Code call until someone allows it', async () => {
+      quietApprovals();
+      const pending = call(
+        { tool_name: 'Bash', tool_input: { command: 'sudo ls' } },
+        { CLAUDE_CODE_SESSION_ATTENDED: '0' },
+      );
+      await answerWhenAsked('allow');
+      const r = await pending;
+      expect(decisionOf(r.stdout)).toBe('allow');
+      expect(r.stdout).toMatch(/approved by the user/);
+      expect(listPending(env.BELAYD_HOME!)).toEqual([]);
     });
-    expect(decisionOf(r.stdout)).toBe('deny');
-    expect(r.stdout).toMatch(/Cursor cannot ask/);
+
+    it('holds a Cursor call and passes on a no', async () => {
+      quietApprovals();
+      const pending = call({
+        tool_name: 'Shell',
+        tool_input: { command: 'sudo ls' },
+        cursor_version: '2.5.0',
+      });
+      await answerWhenAsked('deny');
+      const r = await pending;
+      expect(decisionOf(r.stdout)).toBe('deny');
+      expect(r.stdout).toMatch(/said no/);
+    });
+
+    it('denies when nobody answers before the hook deadline', async () => {
+      quietApprovals();
+      const started = Date.now();
+      const r = await handleClaudeCode(
+        JSON.stringify({
+          hook_event_name: 'PreToolUse',
+          cwd: workspace,
+          tool_name: 'Bash',
+          tool_input: { command: 'sudo ls' },
+        }),
+        { env: { ...env, CLAUDE_CODE_SESSION_ATTENDED: '0' }, timeoutSec: 6 },
+      );
+      expect(decisionOf(r.stdout)).toBe('deny');
+      expect(r.stdout).toMatch(/nobody answered/);
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(listPending(env.BELAYD_HOME!)).toEqual([]);
+    });
+
+    it('still uses the native prompt in an attended session', async () => {
+      quietApprovals();
+      const r = await call(
+        { tool_name: 'Bash', tool_input: { command: 'sudo ls' } },
+        { CLAUDE_CODE_SESSION_ATTENDED: '1' },
+      );
+      expect(decisionOf(r.stdout)).toBe('ask');
+    });
   });
 });
