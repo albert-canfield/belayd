@@ -23,7 +23,16 @@ export type Host = 'claude-code' | 'cursor';
 
 interface Deps {
   env: NodeJS.ProcessEnv;
+  /** The hook timeout Claude Code was configured with, from `--timeout`. */
+  timeoutSec?: number;
+  /** Path to belayd's bin.js, used to start the approval page. */
+  binPath?: string;
 }
+
+/** Older installs used a 30 second hook timeout and did not pass --timeout. */
+const DEFAULT_TIMEOUT_SEC = 30;
+/** Answer this long before the agent would give up on the hook. */
+const SAFETY_MARGIN_MS = 5000;
 
 export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookResult> {
   let input: ClaudeHookInput;
@@ -58,7 +67,27 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
     };
     const policy = await loadPolicy({ workspace, belaydHome: stateDir });
     const decision = evaluate(action, ctx, policy, { belaydHome: stateDir });
-    return render(decision, host);
+    if (decision.verdict !== 'ask') return render(decision);
+
+    const started = Date.now();
+    const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
+    // Loaded only when a person may need to answer; most tool calls never get here.
+    const { resolveAsk } = await import('../../approval/resolve.js');
+    const resolution = await resolveAsk({
+      decision,
+      action,
+      ctx,
+      policy,
+      belaydHome: stateDir,
+      env: deps.env,
+      deadlineMs: timeoutMs - SAFETY_MARGIN_MS - (Date.now() - started),
+      // Claude Code shows its own prompt in attended sessions. `claude -p` and other
+      // unattended runs set CLAUDE_CODE_SESSION_ATTENDED=0 and would auto-deny instead.
+      // Cursor does not enforce "ask" from this hook at all.
+      canAskNatively: host === 'claude-code' && deps.env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
+      binPath: deps.binPath ?? process.argv[1] ?? '',
+    });
+    return output(resolution.verdict, resolution.reason);
   } catch (err) {
     return deny(
       `belayd hit an error and is blocking this action to be safe: ${(err as Error).message}. ` +
@@ -118,10 +147,11 @@ export function toAction(tool: string, input: Record<string, unknown>, cwd: stri
   return { kind: 'tool', name: tool, input };
 }
 
-function render(decision: Decision, host: Host): HookResult {
+function render(decision: Decision): HookResult {
   const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
   switch (decision.verdict) {
     case 'pass':
+    case 'ask':
       return { stdout: '', exitCode: 0 };
     case 'allow':
       return output('allow', `belayd: ${decision.reason}${rule}`);
@@ -130,15 +160,6 @@ function render(decision: Decision, host: Host): HookResult {
         `belayd blocked this: ${decision.reason}${rule} ` +
           'Do not try to get around this with a different command. If it is really needed, explain why and let the user decide.',
       );
-    case 'ask':
-      if (host === 'cursor') {
-        // Cursor does not enforce "ask" from preToolUse hooks; returning it would let the call run.
-        return deny(
-          `belayd needs a person to approve this, and Cursor cannot ask from this hook yet: ${decision.reason}${rule} ` +
-            'Ask the user to run it themselves, or to allow it in belayd.yaml.',
-        );
-      }
-      return output('ask', `belayd: ${decision.reason}${rule}`);
   }
 }
 

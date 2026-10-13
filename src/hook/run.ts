@@ -7,12 +7,17 @@ import type { HookResult } from './types.js';
  */
 export async function runHook(args: string[]): Promise<void> {
   const agent = args[0] ?? '';
+  const t = args.indexOf('--timeout');
+  const timeoutSec = t >= 0 ? Number(args[t + 1]) || undefined : undefined;
   let result: HookResult;
   try {
     const input = await readStdin();
     switch (agent) {
       case 'claude-code':
-        result = await handleClaudeCode(input, { env: process.env });
+        result = await handleClaudeCode(input, {
+          env: process.env,
+          ...(timeoutSec ? { timeoutSec } : {}),
+        });
         break;
       default:
         result = blockUnknown(`unknown agent "${agent}"`);

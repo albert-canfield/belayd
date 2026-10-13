@@ -5,7 +5,11 @@ import path from 'node:path';
 
 /** Claude Code added `onFailure: "block"` in this version. Older versions fail open on hook errors. */
 export const ON_FAILURE_MIN_VERSION = '2.1.295';
-export const HOOK_TIMEOUT_SECONDS = 30;
+/**
+ * Long enough for a held call (approval timeout, 120 s by default) plus margin.
+ * The hook gets this value as --timeout and always answers a few seconds before it.
+ */
+export const HOOK_TIMEOUT_SECONDS = 180;
 
 export interface ClaudeTarget {
   scope: 'project' | 'global';
@@ -106,12 +110,12 @@ export function hookHandler(opts: {
     return {
       type: 'command',
       command: opts.nodePath,
-      args: [opts.binPath, 'hook', 'claude-code'],
+      args: [opts.binPath, 'hook', 'claude-code', '--timeout', String(HOOK_TIMEOUT_SECONDS)],
       timeout: HOOK_TIMEOUT_SECONDS,
       onFailure: 'block',
     };
   }
-  const run = `${shellQuote(opts.nodePath)} ${shellQuote(opts.binPath)} hook claude-code`;
+  const run = `${shellQuote(opts.nodePath)} ${shellQuote(opts.binPath)} hook claude-code --timeout ${HOOK_TIMEOUT_SECONDS}`;
   const guard = `{ echo "belayd is not working, so this action is blocked to be safe. Run: belayd doctor" >&2; exit 2; }`;
   return { type: 'command', command: `${run} || ${guard}`, timeout: HOOK_TIMEOUT_SECONDS };
 }
