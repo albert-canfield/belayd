@@ -14,6 +14,8 @@ export default defineConfig({
   // Bundle every dependency. One file per chunk loads much faster than resolving
   // node_modules on each hook call, and the package ships with no runtime deps.
   noExternal: [/.*/],
+  // node:sqlite only exists with the prefix, so keep node: on built-in imports.
+  removeNodeProtocol: false,
   // Some bundled CommonJS code calls require() for Node built-ins.
   banner: {
     js: [
