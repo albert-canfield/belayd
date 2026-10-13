@@ -1,4 +1,5 @@
 import type { CompiledPolicy } from '../policy/load.js';
+import { actionLabel } from '../policy/label.js';
 import type { Action, ActionContext, Decision } from '../policy/types.js';
 import { holdForApproval } from './hold.js';
 
@@ -88,29 +89,4 @@ export async function resolveAsk(opts: ResolveOptions): Promise<Resolution> {
     reason: `belayd: the user said no to this. ${decision.reason}${rule} Do not retry it or work around it; ask the user how they want to proceed.`,
     answeredBy: result.by,
   };
-}
-
-/** One line (or block) a person can judge quickly. */
-export function actionLabel(action: Action): string {
-  switch (action.kind) {
-    case 'shell':
-      return action.command;
-    case 'read':
-      return `read ${action.path}`;
-    case 'write':
-      return `write ${action.path}`;
-    case 'fetch':
-      return `${action.method ?? 'GET'} ${action.url}`;
-    case 'mcp': {
-      let args: string;
-      try {
-        args = JSON.stringify(action.args);
-      } catch {
-        args = '';
-      }
-      return `${action.server}: ${action.tool} ${args.length > 400 ? `${args.slice(0, 397)}...` : args}`;
-    }
-    case 'tool':
-      return action.name;
-  }
 }

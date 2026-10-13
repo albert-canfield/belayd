@@ -1,9 +1,10 @@
-import path from 'node:path';
+import { record, sessionKey, summarizeInput } from '../../audit/record.js';
 import type { HookResult } from '../../hook/types.js';
+import { actionLabel } from '../../policy/label.js';
 import { evaluate } from '../../policy/engine.js';
 import { loadPolicy } from '../../policy/load.js';
 import type { Action, ActionContext, Decision } from '../../policy/types.js';
-import { belaydHome, findWorkspace, homeDir } from '../../util/paths.js';
+import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../../util/paths.js';
 
 /** The fields belayd reads from a Claude Code hook payload. */
 export interface ClaudeHookInput {
@@ -43,19 +44,56 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       'belayd could not read the hook input from the agent, so it is blocking this action to be safe.',
     );
   }
-  if (input.hook_event_name && input.hook_event_name !== 'PreToolUse')
-    return { stdout: '', exitCode: 0 };
-
+  const event = input.hook_event_name ?? 'PreToolUse';
   const host = detectHost(input, deps.env);
-  const cwd = input.cwd ? path.resolve(input.cwd) : process.cwd();
+  const cwd = canonicalPath(input.cwd ?? process.cwd());
   const workspace = deps.env.CLAUDE_PROJECT_DIR
-    ? path.resolve(deps.env.CLAUDE_PROJECT_DIR)
+    ? canonicalPath(deps.env.CLAUDE_PROJECT_DIR)
     : findWorkspace(cwd);
-  const home = homeDir(deps.env);
+  const home = canonicalPath(homeDir(deps.env));
   const stateDir = belaydHome(deps.env);
+  const started = Date.now();
+  const session = sessionKey(host, input.session_id);
+
+  if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+    await record(stateDir, {
+      session,
+      phase: 'post',
+      at: started,
+      agent: host,
+      workspace,
+      cwd,
+      tool: input.tool_name,
+      toolUseId: input.tool_use_id,
+      outcome: event === 'PostToolUseFailure' ? 'failed' : 'ran',
+    });
+    return { stdout: '', exitCode: 0 };
+  }
+  if (event !== 'PreToolUse') return { stdout: '', exitCode: 0 };
+
+  const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
+  const audit = (
+    told: string,
+    extra: { verdict?: string; reason?: string; ruleId?: string; answeredBy?: string },
+  ) =>
+    record(stateDir, {
+      session,
+      phase: 'pre',
+      at: started,
+      agent: host,
+      workspace,
+      cwd,
+      tool: input.tool_name,
+      toolUseId: input.tool_use_id,
+      kind: action.kind,
+      label: actionLabel(action),
+      input: summarizeInput(input.tool_input ?? {}),
+      decision: told,
+      durationMs: Date.now() - started,
+      ...extra,
+    });
 
   try {
-    const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
     const ctx: ActionContext = {
       agent: host,
       ...(input.tool_name ? { toolName: input.tool_name } : {}),
@@ -67,9 +105,16 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
     };
     const policy = await loadPolicy({ workspace, belaydHome: stateDir });
     const decision = evaluate(action, ctx, policy, { belaydHome: stateDir });
-    if (decision.verdict !== 'ask') return render(decision);
+    const facts = {
+      verdict: decision.verdict,
+      reason: decision.reason,
+      ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
+    };
+    if (decision.verdict !== 'ask') {
+      await audit(decision.verdict, facts);
+      return render(decision);
+    }
 
-    const started = Date.now();
     const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
     // Loaded only when a person may need to answer; most tool calls never get here.
     const { resolveAsk } = await import('../../approval/resolve.js');
@@ -87,10 +132,16 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       canAskNatively: host === 'claude-code' && deps.env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
       binPath: deps.binPath ?? process.argv[1] ?? '',
     });
+    await audit(resolution.verdict, {
+      ...facts,
+      ...(resolution.answeredBy ? { answeredBy: resolution.answeredBy } : {}),
+    });
     return output(resolution.verdict, resolution.reason);
   } catch (err) {
+    const message = (err as Error).message;
+    await audit('deny', { verdict: 'error', reason: `belayd error: ${message}` });
     return deny(
-      `belayd hit an error and is blocking this action to be safe: ${(err as Error).message}. ` +
+      `belayd hit an error and is blocking this action to be safe: ${message}. ` +
         'Ask the user to run `belayd doctor`.',
     );
   }

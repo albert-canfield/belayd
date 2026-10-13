@@ -120,6 +120,34 @@ export function hookHandler(opts: {
   return { type: 'command', command: `${run} || ${guard}`, timeout: HOOK_TIMEOUT_SECONDS };
 }
 
+/** Hook events belayd installs, and what each one is for. */
+export type BelaydHooks = Partial<
+  Record<'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure', HookHandler>
+>;
+
+/** PostToolUse records what actually ran. It cannot block, so it gets no guard and a short timeout. */
+export const POST_HOOK_TIMEOUT_SECONDS = 30;
+
+export function belaydHooks(opts: {
+  nodePath: string;
+  binPath: string;
+  claudeVersion: string | undefined;
+}): BelaydHooks {
+  const post: HookHandler = supportsOnFailure(opts.claudeVersion)
+    ? {
+        type: 'command',
+        command: opts.nodePath,
+        args: [opts.binPath, 'hook', 'claude-code', '--timeout', String(POST_HOOK_TIMEOUT_SECONDS)],
+        timeout: POST_HOOK_TIMEOUT_SECONDS,
+      }
+    : {
+        type: 'command',
+        command: `${shellQuote(opts.nodePath)} ${shellQuote(opts.binPath)} hook claude-code --timeout ${POST_HOOK_TIMEOUT_SECONDS}`,
+        timeout: POST_HOOK_TIMEOUT_SECONDS,
+      };
+  return { PreToolUse: hookHandler(opts), PostToolUse: post, PostToolUseFailure: post };
+}
+
 export function isBelaydHandler(h: unknown): boolean {
   if (!h || typeof h !== 'object') return false;
   const { command, args } = h as { command?: unknown; args?: unknown };
@@ -146,8 +174,8 @@ export function readSettings(file: string): Settings {
   }
 }
 
-/** Returns a copy of `settings` with every belayd hook removed, then `handler` added (if given). */
-export function withBelaydHook(settings: Settings, handler: HookHandler | undefined): Settings {
+/** Returns a copy of `settings` with every belayd hook removed, then `hooks` added (if given). */
+export function withBelaydHook(settings: Settings, add: BelaydHooks | undefined): Settings {
   const next: Settings = structuredClone(settings);
   const hooks = { ...(next.hooks ?? {}) };
   for (const [event, groups] of Object.entries(hooks)) {
@@ -158,7 +186,9 @@ export function withBelaydHook(settings: Settings, handler: HookHandler | undefi
     if (cleaned.length > 0) hooks[event] = cleaned;
     else delete hooks[event];
   }
-  if (handler) hooks.PreToolUse = [...(hooks.PreToolUse ?? []), { matcher: '*', hooks: [handler] }];
+  for (const [event, handler] of Object.entries(add ?? {})) {
+    if (handler) hooks[event] = [...(hooks[event] ?? []), { matcher: '*', hooks: [handler] }];
+  }
   if (Object.keys(hooks).length > 0) next.hooks = hooks;
   else delete next.hooks;
   return next;
