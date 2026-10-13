@@ -59,10 +59,34 @@ export function detectClaudeVersion(env: NodeJS.ProcessEnv = process.env): strin
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return /(\d+\.\d+\.\d+)/.exec(out)?.[1];
+    const v = /(\d+\.\d+\.\d+)/.exec(out)?.[1];
+    if (v) return v;
   } catch {
-    return undefined;
+    // not on PATH; many people only use the editor extension
   }
+  return editorExtensionVersion(env);
+}
+
+/**
+ * The newest Claude Code bundled with the VS Code or Cursor extension. When several are
+ * installed, the oldest one still in use could be older, so this is a best guess.
+ */
+function editorExtensionVersion(env: NodeJS.ProcessEnv): string | undefined {
+  const home = env.HOME || os.homedir();
+  const versions: string[] = [];
+  for (const dir of ['.vscode/extensions', '.vscode-insiders/extensions', '.cursor/extensions']) {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(path.join(home, dir));
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const m = /^anthropic\.claude-code-(\d+\.\d+\.\d+)/.exec(e);
+      if (m) versions.push(m[1]!);
+    }
+  }
+  return versions.sort(compareVersions).at(-1);
 }
 
 export function supportsOnFailure(version: string | undefined): boolean {
