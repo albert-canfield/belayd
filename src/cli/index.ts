@@ -59,6 +59,30 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('approve')
+    .description('Answer agents waiting for your approval (live console)')
+    .argument('[id]', 'answer one request directly, with --allow or --deny')
+    .option('--allow', 'allow the request')
+    .option('--deny', 'deny the request')
+    .option('--list', 'print what is waiting and exit')
+    .option('--json', 'print what is waiting as JSON and exit')
+    .action(async (id: string | undefined, opts) => {
+      const { approve } = await import('./approve.js');
+      process.exitCode = await approve(id, opts);
+    });
+
+  program
+    .command('ui')
+    .description('Open the local approval page in your browser')
+    .option('--port <port>', 'port to listen on (default 23529)')
+    .option('--no-open', 'print the link without opening a browser')
+    .option('--serve', 'run the page server in the foreground')
+    .action(async (opts) => {
+      const { ui } = await import('./ui.js');
+      process.exitCode = await ui(opts);
+    });
+
+  program
     .command('doctor')
     .description('Check that belayd is installed and working')
     .action(async () => {

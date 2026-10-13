@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pc from 'picocolors';
+import { listPending } from '../approval/store.js';
+import { readUiState } from '../approval/ui-state.js';
 import {
   claudeConfigDir,
+  HOOK_TIMEOUT_SECONDS,
   detectClaudeVersion,
   findInstalledHandler,
   ON_FAILURE_MIN_VERSION,
@@ -29,10 +32,12 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
 
   const workspace = findWorkspace(cwd);
   const state = belaydHome();
+  let policyTimeoutMs: number | undefined;
   line('ok', `belayd ${version} on Node ${process.versions.node}`);
 
   try {
     const policy = await loadPolicy({ workspace, belaydHome: state, noCache: true });
+    policyTimeoutMs = policy.approval.timeoutMs;
     const count = policy.rules.final.length + policy.rules.user.length + policy.rules.preset.length;
     line('ok', `Policy: ${policy.name} (${count} rules)`);
   } catch (err) {
@@ -83,6 +88,20 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     }
   }
   if (installed === 0) line('warn', 'No belayd hook found for Claude Code', 'Run: belayd init');
+
+  const pending = listPending(state);
+  const page = readUiState(state);
+  line(
+    'ok',
+    `Approvals: ${pending.length} waiting · page ${page ? `running on port ${page.port}` : 'not running (starts when needed)'}`,
+  );
+  if (policyTimeoutMs !== undefined && policyTimeoutMs > (HOOK_TIMEOUT_SECONDS - 5) * 1000) {
+    line(
+      'warn',
+      `approval.timeout is longer than the hook allows (${HOOK_TIMEOUT_SECONDS - 5}s)`,
+      'belayd will stop waiting at the hook limit and deny.',
+    );
+  }
 
   const smoke = smokeTest(workspace);
   if (smoke.ok) line('ok', `Hook blocks "rm -rf ~" in ${smoke.ms} ms`);
