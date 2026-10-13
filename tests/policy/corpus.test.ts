@@ -28,11 +28,11 @@ const ctx: ActionContext = {
 };
 const opts = { belaydHome: '/home/dev/.belayd' };
 const load = (preset: string) =>
-  loadPolicy({ workspace: ctx.workspace, belaydHome: opts.belaydHome, preset });
+  loadPolicy({ workspace: ctx.workspace, belaydHome: opts.belaydHome, preset, noCache: true });
 const policies: Record<PresetKey, CompiledPolicy> = {
-  balanced: load('balanced'),
-  strict: load('strict'),
-  yolo: load('yolo-with-undo'),
+  balanced: await load('balanced'),
+  strict: await load('strict'),
+  yolo: await load('yolo-with-undo'),
 };
 
 function actionOf(row: Row): Action {
