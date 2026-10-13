@@ -27,6 +27,9 @@ describe('belayd init and uninstall for Claude Code', () => {
       timeout: 180,
       onFailure: 'block',
     });
+    const all = read(projectSettings()).hooks;
+    expect(Object.keys(all).sort()).toEqual(['PostToolUse', 'PostToolUseFailure', 'PreToolUse']);
+    expect(all.PostToolUse[0].hooks[0].onFailure).toBeUndefined();
     expect(fs.existsSync(path.join(sb.project, 'belayd.yaml'))).toBe(true);
     expect(fs.readFileSync(path.join(sb.project, '.git', 'info', 'exclude'), 'utf8')).toContain(
       '.claude/settings.local.json',
