@@ -1,0 +1,110 @@
+# strict: for sensitive repositories and unattended runs.
+#
+# Everything in balanced, plus: anything that no rule allows is asked about.
+# Reading and searching inside the project, and a short list of read-only
+# commands, are allowed so the agent can still look around.
+
+version: 1
+name: strict
+description: Asks about everything except reading the project. Blocks harder.
+extends: balanced
+default: ask
+
+rules:
+  - id: allow-project-reads
+    match:
+      tool: [read]
+      reads: ['{workspace}', '{workspace}/**']
+    decision: allow
+    reason: Reading files inside the project.
+
+  - id: allow-read-only-commands
+    match:
+      command:
+        - cd
+        - ls
+        - pwd
+        - 'true'
+        - 'false'
+        - exit
+        - cat
+        - head
+        - tail
+        - wc
+        - grep
+        - rg
+        - file
+        - stat
+        - tree
+        - which
+        - echo
+        - git status
+        - git diff
+        - git log
+        - git show
+        - git branch
+        - git blame
+    decision: allow
+    reason: A read-only command.
+
+  - id: ask-any-write
+    match:
+      writes: ['/**']
+    decision: ask
+    reason: Changes files.
+
+  - id: ask-read-outside-workspace
+    match:
+      reads: ['!{workspace}', '!{workspace}/**', '!{tmp}/**']
+    decision: ask
+    reason: Reads files outside this project.
+
+  - id: ask-inline-code
+    match: { inlineCode: true }
+    decision: ask
+    reason: Runs inline code (for example python -c or node -e) that belayd cannot check.
+
+  - id: allow-known-domains
+    match:
+      tool: [fetch]
+      domain:
+        - github.com
+        - '*.github.com'
+        - '*.githubusercontent.com'
+        - registry.npmjs.org
+        - '*.npmjs.org'
+        - '*.npmjs.com'
+        - pypi.org
+        - files.pythonhosted.org
+        - crates.io
+        - '*.crates.io'
+        - proxy.golang.org
+        - pkg.go.dev
+        - rubygems.org
+        - developer.mozilla.org
+    decision: allow
+    reason: Fetching from a well-known source.
+
+  # Stricter versions of balanced rules (same id replaces the balanced rule).
+
+  - id: ask-write-outside-workspace
+    match:
+      writes: ['!{workspace}', '!{workspace}/**', '!{tmp}/**']
+    decision: deny
+    reason: Changes files outside this project.
+
+  - id: ask-secrets-outbound
+    match: { secrets: true }
+    decision: deny
+    reason: Sends what looks like a secret over the network.
+
+  - id: ask-unparseable
+    match: { parseError: true }
+    decision: deny
+    reason: belayd could not parse this command, so it cannot check it.
+
+  - id: ask-privilege
+    match:
+      command: [sudo, doas, su, pkexec, runuser]
+    decision: deny
+    reason: Running commands as another user is not allowed in strict mode.

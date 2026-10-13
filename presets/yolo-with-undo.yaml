@@ -1,0 +1,77 @@
+# yolo-with-undo: let the agent run, keep the parachute.
+#
+# Approves everything that no rule stops, so your agent stops prompting you.
+# The catastrophic rules from balanced still block, and the merely risky ones
+# ask. Everything else is allowed, because belayd snapshots files before every
+# change and `belayd undo` can put them back.
+
+version: 1
+name: yolo-with-undo
+description: Approves almost everything, blocks the catastrophic, and relies on undo.
+extends: balanced
+default: allow
+
+rules:
+  # Things undo can fix are allowed instead of asked about.
+  - id: ask-discard-work
+    match:
+      command: [git reset, git clean, git checkout, git restore, git stash]
+    decision: allow
+    reason: Undo can restore discarded work.
+
+  - id: ask-delete-unknown-paths
+    match:
+      command: [rm, rmdir, shred, srm, unlink, rimraf, mv]
+      unresolved: true
+    decision: allow
+    reason: Undo can restore deleted files in the project.
+
+  # Things undo cannot fix are asked about instead of blocked.
+  - id: no-force-push
+    match:
+      command: git push
+      args: { any: [--force, -f, '+*', --mirror] }
+    decision: ask
+    reason: A force push rewrites history that other people may already have, and undo cannot reach the remote.
+
+  - id: no-pipe-to-shell
+    match:
+      codeFrom:
+        [
+          curl,
+          wget,
+          fetch,
+          http,
+          https,
+          xh,
+          aria2c,
+          nc,
+          ncat,
+          iwr,
+          irm,
+          invoke-webrequest,
+          invoke-restmethod,
+        ]
+    decision: ask
+    reason: Runs code straight from the internet without anyone reading it.
+
+  - id: no-secret-files
+    match:
+      reads:
+        - '**/.env'
+        - '**/.env.*'
+        - '!**/.env.{example,sample,template,dist,defaults}'
+        - '**/*.{pem,key,p12,pfx,keystore,jks}'
+        - '**/id_{rsa,dsa,ecdsa,ed25519}'
+        - '{home}/.ssh/**'
+        - '!{home}/.ssh/*.pub'
+        - '!{home}/.ssh/{known_hosts,config}'
+        - '{home}/.aws/credentials'
+        - '{home}/.config/gcloud/**'
+        - '{home}/.kube/config'
+        - '{home}/.netrc'
+        - '{home}/.npmrc'
+        - '{home}/.gnupg/**'
+        - '**/.git-credentials'
+    decision: ask
+    reason: This file holds secrets such as keys, tokens or passwords.

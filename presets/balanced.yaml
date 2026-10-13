@@ -1,0 +1,324 @@
+# balanced: the default.
+#
+# Stops the things you never want an agent to do, asks about the risky ones,
+# and otherwise stays out of the way. When no rule matches, belayd has no
+# opinion and your agent's own permission settings decide, exactly as before.
+#
+# Rules marked `final` cannot be overridden by your own rules. You can still
+# turn one off with `disable: [rule-id]` in belayd.yaml, which is logged.
+
+version: 1
+name: balanced
+description: Blocks the dangerous stuff, asks about risky moves, stays quiet otherwise.
+default: pass
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Never
+  # ---------------------------------------------------------------------------
+
+  - id: no-delete-system-or-home
+    final: true
+    match:
+      command: [rm, rmdir, shred, srm, unlink, rimraf, find]
+      writes:
+        - /
+        - '{home}'
+        - '/{bin,boot,dev,etc,lib,lib32,lib64,opt,proc,root,sbin,srv,sys,usr,var,System,Library,Applications,Users,Volumes,private,nix}'
+        - '{home}/{Desktop,Documents,Downloads,Library,Pictures,Music,Movies,Applications,.ssh,.config,.gnupg}'
+    decision: deny
+    reason: This deletes the root of the file system, your home folder or a system folder. There is no way back from that.
+
+  - id: no-recursive-permission-changes-outside
+    final: true
+    match:
+      command: [chmod, chown, chgrp]
+      args: { any: [-R, --recursive] }
+      writes:
+        - /
+        - '{home}'
+        - '/{bin,boot,dev,etc,lib,lib64,opt,root,sbin,usr,var,System,Library,Applications,Users,private}'
+    decision: deny
+    reason: Recursively changing permissions or owners on system folders or your home folder can break the machine.
+
+  - id: no-disk-wipe
+    final: true
+    match:
+      command:
+        - mkfs
+        - mkfs.*
+        - wipefs
+        - fdisk
+        - sfdisk
+        - parted
+        - diskutil eraseDisk
+        - diskutil eraseVolume
+        - diskutil zeroDisk
+        - diskutil secureErase
+        - diskutil partitionDisk
+        - diskutil apfs deleteContainer
+    decision: deny
+    reason: Formats or repartitions a disk.
+
+  - id: no-raw-disk-writes
+    final: true
+    match:
+      writes: ['/dev/{sd,hd,vd,xvd,nvme,disk,rdisk,mmcblk}*']
+    decision: deny
+    reason: Writes straight to a disk device, which destroys whatever is on it.
+
+  - id: no-pipe-to-shell
+    match:
+      codeFrom:
+        [
+          curl,
+          wget,
+          fetch,
+          http,
+          https,
+          xh,
+          aria2c,
+          nc,
+          ncat,
+          iwr,
+          irm,
+          invoke-webrequest,
+          invoke-restmethod,
+        ]
+    decision: deny
+    reason: Runs code straight from the internet without anyone reading it. Download the script, show it to the user, and run it only after they agree.
+
+  - id: no-secret-files
+    match:
+      reads: &secret-files
+        - '**/.env'
+        - '**/.env.*'
+        - '!**/.env.{example,sample,template,dist,defaults}'
+        - '!**/.env.*.{example,sample,template,dist}'
+        - '**/*.{pem,key,p12,pfx,keystore,jks}'
+        - '**/id_{rsa,dsa,ecdsa,ed25519}'
+        - '{home}/.ssh/**'
+        - '!{home}/.ssh/*.pub'
+        - '!{home}/.ssh/{known_hosts,config}'
+        - '{home}/.aws/credentials'
+        - '{home}/.config/gcloud/**'
+        - '{home}/.azure/**'
+        - '{home}/.kube/config'
+        - '{home}/.docker/config.json'
+        - '{home}/.netrc'
+        - '{home}/.npmrc'
+        - '{home}/.pypirc'
+        - '{home}/.gnupg/**'
+        - '{home}/.config/gh/hosts.yml'
+        - '**/.git-credentials'
+    decision: deny
+    reason: This file holds secrets such as keys, tokens or passwords. Ask the user for the specific value you need instead of reading the file.
+
+  - id: no-force-push
+    match:
+      command: git push
+      args: { any: [--force, -f, '+*', --mirror] }
+    decision: deny
+    reason: A force push rewrites history that other people may already have. Push normally, or ask the user to force push themselves.
+
+  # ---------------------------------------------------------------------------
+  # Ask first
+  # ---------------------------------------------------------------------------
+
+  - id: ask-secret-file-writes
+    match:
+      writes: *secret-files
+    decision: ask
+    reason: Changes a file that holds secrets.
+
+  - id: ask-agent-config-changes
+    final: true
+    match:
+      writes:
+        - '{workspace}/belayd.yaml'
+        - '{belayd_home}/**'
+        - '{home}/.claude/settings.json'
+        - '{home}/.claude/settings.local.json'
+        - '{workspace}/.claude/settings.json'
+        - '{workspace}/.claude/settings.local.json'
+        - '{home}/.codex/{config.toml,hooks.json,requirements.toml}'
+        - '{workspace}/.codex/**'
+        - '{home}/.cursor/hooks.json'
+        - '{workspace}/.cursor/hooks.json'
+        - '{home}/.gemini/settings.json'
+        - '{workspace}/.gemini/settings.json'
+    decision: ask
+    reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
+
+  - id: ask-write-outside-workspace
+    match:
+      writes:
+        - '!{workspace}'
+        - '!{workspace}/**'
+        - '!{tmp}/**'
+        - '!{home}/.claude/**'
+        - '!{home}/.cache/**'
+        - '!{home}/.npm/**'
+        - '!{home}/Library/Caches/**'
+    decision: ask
+    reason: Changes files outside this project.
+
+  - id: ask-delete-unknown-paths
+    match:
+      command: [rm, rmdir, shred, srm, unlink, rimraf, mv]
+      unresolved: true
+    decision: ask
+    reason: Deletes or moves paths that are only known when the command runs, so belayd cannot check them.
+
+  - id: ask-force-push-with-lease
+    match:
+      command: git push
+      args: { any: ['--force-with-lease*', --force-if-includes] }
+    decision: ask
+    reason: Force pushes, although with a safety check.
+
+  - id: ask-delete-remote-branch
+    match:
+      command: git push
+      args: { any: [--delete, -d, ':*'] }
+    decision: ask
+    reason: Deletes a branch or tag on the remote.
+
+  - id: ask-history-rewrite
+    match:
+      command: [git filter-branch, git filter-repo, git reflog expire, git update-ref]
+    decision: ask
+    reason: Rewrites Git history.
+
+  - id: ask-discard-work
+    match:
+      command:
+        - git reset
+        - git clean
+        - git checkout
+        - git restore
+        - git stash
+      args: { any: [--hard, -f, --force, -fd, -fdx, -fx, '.', drop, clear, --worktree] }
+    decision: ask
+    reason: Throws away uncommitted work.
+
+  - id: ask-dynamic-command
+    match: { dynamic: true }
+    decision: ask
+    reason: Runs a command that is only known at run time, so belayd cannot check it.
+
+  - id: ask-unparseable
+    match: { parseError: true }
+    decision: ask
+    reason: belayd could not parse this command, so it cannot check it.
+
+  - id: ask-privilege
+    match:
+      command: [sudo, doas, su, pkexec, runuser]
+    decision: ask
+    reason: Runs a command as another user, usually root.
+
+  - id: ask-secrets-outbound
+    match: { secrets: true }
+    decision: ask
+    reason: Sends what looks like a secret over the network.
+
+  - id: ask-publish
+    match:
+      command:
+        - npm publish
+        - pnpm publish
+        - yarn publish
+        - yarn npm publish
+        - bun publish
+        - cargo publish
+        - gem push
+        - twine upload
+        - poetry publish
+        - uv publish
+        - gh release create
+        - docker push
+    decision: ask
+    reason: Publishes something to the outside world.
+
+  - id: ask-global-install
+    match:
+      command:
+        [
+          npm install,
+          npm i,
+          npm add,
+          npm uninstall,
+          pnpm add,
+          pnpm install,
+          pnpm remove,
+          bun add,
+          bun install,
+        ]
+      args: { any: [-g, --global] }
+    decision: ask
+    reason: Installs or removes software for the whole machine, not just this project.
+
+  - id: ask-system-packages
+    match:
+      command:
+        - brew install
+        - brew uninstall
+        - brew upgrade
+        - port install
+        - apt install
+        - apt remove
+        - apt purge
+        - apt-get install
+        - apt-get remove
+        - apt-get purge
+        - yum install
+        - yum remove
+        - dnf install
+        - dnf remove
+        - yarn global
+        - snap install
+        - choco install
+        - winget install
+    decision: ask
+    reason: Installs or removes software for the whole machine, not just this project.
+
+  - id: ask-infra-destroy
+    match:
+      command:
+        - terraform destroy
+        - tofu destroy
+        - pulumi destroy
+        - cdk destroy
+        - kubectl delete
+        - helm uninstall
+        - aws s3 rm
+        - aws s3 rb
+        - heroku apps:destroy
+        - fly apps destroy
+        - docker system prune
+        - docker volume rm
+        - docker volume prune
+    decision: ask
+    reason: Destroys infrastructure or stored data.
+
+  - id: ask-database-drops
+    match:
+      command: [psql, mysql, mariadb, sqlite3, mongosh, mongo, redis-cli, sqlcmd]
+      args:
+        any:
+          - '*DROP DATABASE*'
+          - '*drop database*'
+          - '*DROP TABLE*'
+          - '*drop table*'
+          - '*DROP SCHEMA*'
+          - '*drop schema*'
+          - '*TRUNCATE*'
+          - '*truncate table*'
+          - '*dropDatabase*'
+          - FLUSHALL
+          - flushall
+          - FLUSHDB
+          - flushdb
+    decision: ask
+    reason: Drops or empties a database.
