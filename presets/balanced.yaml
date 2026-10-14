@@ -130,7 +130,8 @@ rules:
         - '{home}/.ssh/**'
         - '!{home}/.ssh/*.pub'
         - '!{home}/.ssh/{known_hosts,config}'
-        - '{home}/.aws/credentials'
+        - '{home}/.aws/**'
+        - '!{home}/.aws/config'
         - '{home}/.config/gcloud/**'
         - '{home}/.azure/**'
         - '{home}/.kube/config'
@@ -246,6 +247,13 @@ rules:
     match: { parseError: true }
     decision: ask
     reason: belayd could not parse this command, so it cannot check it.
+
+  - id: ask-serving-files
+    match:
+      command: [python, python3, php, ruby, npx, pnpm dlx, http-server, serve]
+      args: { any: [http.server, SimpleHTTPServer, -S, httpd, http-server, serve] }
+    decision: ask
+    reason: Serves files from this folder over the network, including any secrets in it.
 
   - id: ask-privilege
     match:

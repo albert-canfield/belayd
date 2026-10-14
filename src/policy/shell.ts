@@ -407,6 +407,22 @@ class Analyzer {
         prefixAssignments.push({ name: p.name, value: this.evalAssignment(p, src, scope, ctx) });
     }
     const { redirects, inline } = this.redirects(cmd.redirects, src, scope, ctx);
+    for (const a of prefixAssignments) {
+      if (!a.value.resolved) continue;
+      if (a.name === 'PROMPT_COMMAND') {
+        this.codeString(
+          [a.value],
+          text,
+          scope,
+          { ...ctx, depth: ctx.depth + 1, via: [...ctx.via, 'PROMPT_COMMAND'] },
+          undefined,
+        );
+      } else if (a.name === 'BASH_ENV' || a.name === 'ENV') {
+        const holder = this.base(text, scope, ctx);
+        this.runScript(holder, a.value, scope, { ...ctx, via: [...ctx.via, a.name] }, false, true);
+        if (holder.dynamic) this.push({ ...holder, program: '', dynamic: true });
+      }
+    }
 
     if (words.length === 0) {
       // A bare assignment (`X=rm`) updates the scope. A bare redirect truncates a file.
@@ -559,6 +575,21 @@ class Analyzer {
         if (rest.length > 0) this.invoke(rest, text, scope, nested('env'), stdin, []);
         return program;
       }
+      case 'busybox':
+      case 'toybox': {
+        // `busybox rm -rf ~` runs the rm applet.
+        if (args.length > 0 && !args[0]!.value.startsWith('-')) {
+          this.invoke(args, text, scope, nested(program), stdin, []);
+        }
+        return program;
+      }
+      case 'trap': {
+        // `trap 'rm -rf ~' EXIT` runs its first argument as code later.
+        const code = args.find((w) => !w.value.startsWith('-'));
+        if (code && args.length > 1)
+          this.codeString([code], text, scope, nested('trap'), undefined);
+        return program;
+      }
       case 'xargs': {
         const rest = skipOptions(args, VALUE_OPTIONS.xargs);
         const inner = rest.length > 0 ? rest : [literal('echo')];
@@ -673,6 +704,7 @@ class Analyzer {
       if (lower.some((a) => interp.inline.includes(a))) {
         inv.inlineCode = true;
         for (const w of args) inv.codeFrom.push(...w.subPrograms);
+        this.inlineCode(args, text, scope, nested(`${program} code`));
       } else if (!lower.some((a) => interp.module?.includes(a))) {
         const script = args.find((w) => !w.value.startsWith('-'));
         if (script) {
@@ -836,6 +868,48 @@ class Analyzer {
     const resolved = resolveIn(scope.cwd, file.value, this.opts.home);
     const downloader = resolved ? scope.downloads.get(resolved) : undefined;
     return downloader ? [downloader] : [];
+  }
+
+  /**
+   * Inline code (`python -c`, `node -e`, `perl -e`, `osascript -e`) cannot be analysed
+   * in general, but the common dangerous shapes can: shell commands passed to
+   * system()/exec()/subprocess, and string paths given to delete or open calls.
+   */
+  private inlineCode(args: EvalWord[], text: string, scope: Scope, ctx: Ctx): void {
+    const code = args
+      .filter((w) => w.resolved)
+      .map((w) => w.value)
+      .join('\n');
+    // A single, double or back-quoted string literal; group 2 is its body.
+    const lit = '([\'"`])((?:\\\\.|(?!\\1).)*)\\1';
+    const shell = new RegExp(
+      '(?:\\bsystem|\\bpopen|\\bexecSync|\\bexec|\\bspawnSync|\\bcheck_output|\\bcheck_call|' +
+        '\\bsubprocess\\.(?:run|call|Popen)|\\bshell_exec|\\bpassthru|do shell script|\\bqx)\\s*\\(?\\s*' +
+        lit,
+      'g',
+    );
+    for (const m of code.matchAll(shell)) {
+      this.source(unquote(m[2]!), cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
+    }
+    const remove = new RegExp(
+      '(?:\\brmtree|\\brmSync|\\brmdirSync|\\bunlinkSync|\\bos\\.remove|\\bos\\.unlink|\\bos\\.rmdir|' +
+        '\\bpromises\\.rm|\\brimraf(?:\\.sync)?|\\bunlink|\\brm_rf|\\bFile\\.delete)\\s*\\(?\\s*' +
+        lit,
+      'g',
+    );
+    for (const m of code.matchAll(remove)) {
+      const target = expandUser(unquote(m[2]!), this.opts.home);
+      this.invoke([literal('rm'), literal('-r'), literal(target)], text, scope, ctx, undefined, []);
+    }
+    const read = new RegExp(
+      '(?:\\bopen|readFileSync|\\breadFile|\\bFile\\.read|\\bIO\\.read|file_get_contents|\\bPath)\\s*\\(\\s*' +
+        lit,
+      'g',
+    );
+    for (const m of code.matchAll(read)) {
+      const target = expandUser(unquote(m[2]!), this.opts.home);
+      this.invoke([literal('cat'), literal(target)], text, scope, ctx, undefined, []);
+    }
   }
 
   /**
@@ -1078,9 +1152,27 @@ class Analyzer {
         case 'CommandExpansion':
         case 'ProcessSubstitution': {
           const before = this.out.length;
+          let staticOut: string | undefined;
           if (part.script) {
             for (const err of part.script.errors ?? []) this.errors.push(err.message);
-            this.script(part.script, part.script.source ?? src, cloneScope(scope), ctx, undefined);
+            const only = part.script.commands.length === 1 ? part.script.commands[0] : undefined;
+            if (only && part.type === 'CommandExpansion') {
+              // `$(echo .env)` is just `.env`: evaluate simple output statically.
+              staticOut = this.node(
+                only.command,
+                part.script.source ?? src,
+                cloneScope(scope),
+                ctx,
+              ).stdout;
+            } else {
+              this.script(
+                part.script,
+                part.script.source ?? src,
+                cloneScope(scope),
+                ctx,
+                undefined,
+              );
+            }
           }
           subPrograms.push(
             ...this.out
@@ -1089,6 +1181,7 @@ class Analyzer {
               .filter(Boolean),
           );
           if (part.type === 'ProcessSubstitution') append(['/dev/fd/63']);
+          else if (staticOut !== undefined) append([staticOut.replace(/\n+$/, '')]);
           else {
             resolved = false;
             append([part.text]);
@@ -1236,6 +1329,15 @@ function quote(s: string): string {
 function splitAlternatives(w: EvalWord): EvalWord[] {
   if (w.values.length <= 1) return [w];
   return w.values.map((value) => ({ ...w, value, values: [value] }));
+}
+
+/** Undo the escapes of a source-code string literal, enough to read a command or path. */
+function unquote(s: string): string {
+  return s.replace(/\\(["'\\\x60])/g, '$1').replace(/\\n/g, '\n');
+}
+
+function expandUser(p: string, home: string): string {
+  return p === '~' || p.startsWith('~/') ? home + p.slice(1) : p;
 }
 
 function literal(value: string): EvalWord {

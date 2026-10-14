@@ -3,7 +3,11 @@ export type AgentId = 'claude-code' | 'codex' | 'cursor' | 'gemini' | 'mcp' | 'c
 /** What an agent wants to do, independent of which agent asked. */
 export type Action =
   | { kind: 'shell'; command: string }
-  | { kind: 'read'; path: string }
+  | {
+      kind: 'read';
+      path: string;
+      /** Search tools: only files matching this glob. */ glob?: string;
+    }
   | { kind: 'write'; path: string; content?: string }
   | { kind: 'fetch'; url: string; method?: string; body?: string }
   | { kind: 'patch'; files: PatchFile[] }

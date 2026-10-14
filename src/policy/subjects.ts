@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import picomatch from 'picomatch';
 import { canonicalPath } from '../util/paths.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
@@ -116,6 +117,45 @@ const WRITES_AFTER_FIRST = new Set(['chmod', 'chown', 'chgrp']);
 /** Programs that change only their last path argument (the destination). */
 const WRITES_LAST = new Set(['cp', 'install', 'ln', 'rsync', 'scp']);
 
+/**
+ * File names that hold secrets. A glob (`cat .e*`, Grep with glob `.env*`) is checked
+ * against these, because belayd cannot list the folder to see what it will match.
+ */
+const SECRET_PROBES = [
+  '.env',
+  '.env.local',
+  '.env.production',
+  '.env.development',
+  'id_rsa',
+  'id_ed25519',
+  'id_ecdsa',
+  'server.key',
+  'private.pem',
+  'credentials',
+  '.npmrc',
+  '.netrc',
+  '.pypirc',
+  '.git-credentials',
+];
+
+/** The secret names a glob in `dir` could match, as paths. */
+export function secretProbes(dir: string, glob: string): string[] {
+  let isMatch: (s: string) => boolean;
+  try {
+    // Like the shell, `*` does not match dotfiles; `.e*` does.
+    isMatch = picomatch(glob, { dot: false, nocase: process.platform !== 'linux' });
+  } catch {
+    return [];
+  }
+  // A glob that also matches ordinary names (`*`, `*.*`) is not aimed at secrets.
+  if (isMatch('notes.txt') || isMatch('index') || isMatch('sub/notes.txt')) return [];
+  const out: string[] = [];
+  for (const name of SECRET_PROBES) {
+    if (isMatch(name) || isMatch(`sub/${name}`)) out.push(path.join(dir, name));
+  }
+  return out;
+}
+
 const MUTATING_MCP_TOOL =
   /write|edit|create|delete|remove|move|rename|update|patch|apply|upload|mkdir|save|put/i;
 const SHELL_MCP_TOOL = /exec|run|shell|command|terminal|bash/i;
@@ -180,7 +220,11 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
     }
     case 'read': {
       const p = absolute(action.path, ctx);
-      return [{ ...empty('read', ctx, action.path), paths: p, reads: p }];
+      const probes = action.glob
+        ? secretProbes(p[p.length - 1]!, action.glob).flatMap(bothForms)
+        : [];
+      const all = [...p, ...probes];
+      return [{ ...empty('read', ctx, action.path), paths: all, reads: all }];
     }
     case 'write': {
       const p = absolute(action.path, ctx);
@@ -272,7 +316,10 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     const glob = full.search(GLOB_CHARS);
     if (glob >= 0) {
       out.push(full);
-      out.push(...bothForms(path.dirname(full.slice(0, glob + 1))));
+      const dir = path.dirname(full.slice(0, glob + 1));
+      out.push(...bothForms(dir));
+      // `cat .e*` reads .env: check the glob against secret file names.
+      out.push(...secretProbes(dir, path.relative(dir, full)).flatMap(bothForms));
     } else {
       out.push(...bothForms(full));
     }
@@ -326,6 +373,17 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     resolved.forEach((p) => paths.add(p));
     if (r.op.includes('>')) resolved.forEach((p) => writes.add(p));
     else resolved.forEach((p) => explicitReads.add(p));
+  }
+
+  // `git show HEAD:.env` and `git cat-file -p rev:path` read a file from history.
+  if (program === 'git' && ['show', 'cat-file'].includes(positionals[0] ?? '')) {
+    for (const a of positionals.slice(1)) {
+      const m = /^[^:\s]*:(.+)$/.exec(a);
+      if (m && inv.cwd)
+        bothForms(path.resolve(ctx.workspace, m[1]!)).forEach(
+          (p) => (paths.add(p), explicitReads.add(p)),
+        );
+    }
   }
 
   const reads = new Set([...paths].filter((p) => !writes.has(p) || program === 'mv'));

@@ -70,8 +70,11 @@ export function toAction(tool: string, input: Record<string, unknown>, cwd: stri
       break;
     }
     case 'Glob':
-    case 'Grep':
-      return { kind: 'read', path: str('path') ?? cwd };
+    case 'Grep': {
+      // Grep reads the files its `glob` matches. Glob only lists names, so it reads nothing.
+      const glob = tool === 'Grep' ? str('glob') : undefined;
+      return { kind: 'read', path: str('path') ?? cwd, ...(glob ? { glob } : {}) };
+    }
     case 'WebFetch': {
       const url = str('url');
       if (url) return { kind: 'fetch', url };
