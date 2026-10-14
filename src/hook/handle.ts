@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { record, sessionKey, summarizeInput } from '../audit/record.js';
-import { addSessionWrites, sessionWrites } from '../audit/session.js';
+import { addSessionWrites, finishCall, sessionWrites, startCall } from '../audit/session.js';
 import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
 import { actionLabel } from '../policy/label.js';
@@ -48,6 +48,10 @@ export async function handleToolHook(
   }
   const input = dialect.parse(payload, deps.event);
   const agent = dialect.agent(payload, deps.env);
+  // Another adapter covers this agent natively (Copilot CLI also runs Claude Code's
+  // hooks): answer nothing, so the call is checked once, by that adapter.
+  if (dialect.handledElsewhere?.(agent, input, deps.env))
+    return dialect.respond('pass', '', { agent });
   const cwd = canonicalPath(input.cwd ?? process.cwd());
   const declared = dialect.workspace?.(deps.env);
   const workspace = declared ? canonicalPath(declared) : findWorkspace(cwd);
@@ -55,6 +59,14 @@ export async function handleToolHook(
   const stateDir = belaydHome(deps.env);
   const started = Date.now();
   const session = sessionKey(agent, input.sessionId);
+  // Agents without a call id get one, so the before and after events pair up for undo.
+  if (!input.toolUseId && input.phase !== 'other') {
+    const id =
+      input.phase === 'pre'
+        ? startCall(stateDir, session, input.tool, input.input)
+        : finishCall(stateDir, session, input.tool, input.input);
+    if (id) input.toolUseId = id;
+  }
   const ctxBase: ActionContext = { agent, cwd, workspace, home };
 
   if (input.phase === 'post' || input.phase === 'failed') {

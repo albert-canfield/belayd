@@ -33,6 +33,11 @@ export interface Dialect {
   toAction(tool: string, input: unknown, cwd: string): Action;
   /** The project root, when the agent tells us. */
   workspace?(env: NodeJS.ProcessEnv): string | undefined;
+  /**
+   * True for a call another adapter already checks natively (Copilot CLI also runs
+   * Claude Code's hooks). belayd then answers nothing here, so it checks the call once.
+   */
+  handledElsewhere?(agent: AgentId, event: ToolEvent, env: NodeJS.ProcessEnv): boolean;
   /** Whether answering `ask` makes the agent show its own prompt to a person. */
   canAskNatively(agent: AgentId, env: NodeJS.ProcessEnv): boolean;
   /** Turns belayd's answer into what this agent reads. */
