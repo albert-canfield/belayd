@@ -141,4 +141,35 @@ describe('runners and hooks the agent changed in this session', () => {
     expect(await verdict('bash a.sh')).toBe('ask');
     expect(Date.now() - started).toBeLessThan(3000);
   });
+
+  it('gives a script its arguments', async () => {
+    file('run.sh', '#!/bin/sh\nset -e\n"$@"\n');
+    expect(await verdict('sh run.sh')).toBe('pass');
+    expect(await verdict('sh run.sh npm test')).toBe('pass');
+    expect(await verdict('sh run.sh rm -rf ~')).toBe('deny');
+    file('del.sh', 'rm -rf "$1"\n');
+    expect(await verdict('bash del.sh build')).toBe('pass');
+    expect(await verdict('bash del.sh ~')).toBe('deny');
+  });
+
+  it('knows that mktemp makes a temporary path', async () => {
+    file('pack.sh', 'tmp=$(mktemp -d)\ntrap \'rm -rf "$tmp"\' EXIT\ncp -r src "$tmp/"\n');
+    expect(await verdict('bash pack.sh')).toBe('pass');
+  });
+
+  it('reads the stock gradlew without asking', async () => {
+    file(
+      'gradlew',
+      [
+        '#!/bin/sh',
+        'if [ -n "$JAVA_HOME" ] ; then JAVACMD=$JAVA_HOME/bin/java; else JAVACMD=java; fi',
+        `eval "set -- $( printf '%s\\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS" | xargs -n1 | sed ' s~[^-[:alnum:]+,./:=@_]~\\\\&~g; ' | tr '\\n' ' ' )" '"$@"'`,
+        'exec "$JAVACMD" "$@"',
+      ].join('\n'),
+      0o755,
+    );
+    expect(await verdict('./gradlew build')).toBe('pass');
+    // The same eval typed by the agent is still unknown code.
+    expect(await verdict(`eval "set -- $(printf '%s' "$X")"`)).toBe('ask');
+  });
 });

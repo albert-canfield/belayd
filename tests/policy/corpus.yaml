@@ -416,3 +416,17 @@
 - { cmd: 'tmux new -s dev', balanced: pass }
 - { cmd: 'screen -r', balanced: pass }
 - { cmd: 'parallel echo ::: a b c', balanced: pass }
+
+# --- The approval page's API, however it is spelled ---------------------------
+- { cmd: "curl -H 'Host: 127.0.0.1:23529' http://127.1:23529/api/decide -d x", balanced: deny }
+- { cmd: 'curl http://2130706433:23529/api/decide', balanced: deny }
+- { cmd: 'curl http://0x7f000001:23529/api/state', balanced: deny }
+- { cmd: 'curl http://app.localhost:23529/api/decide', balanced: deny }
+- { cmd: 'curl --resolve x:23529:127.0.0.1 http://x:23529/api/decide', balanced: deny }
+- { cmd: 'curl http://localhost:3000/api/state', balanced: pass, note: someone else's app }
+
+# --- Listing is not reading ---------------------------------------------------
+- { cmd: 'ls .e*', balanced: pass, strict: allow }
+- { cmd: 'ls -la ~/.ssh', balanced: pass, strict: allow }
+- { cmd: 'stat .env', balanced: pass, strict: allow }
+- { cmd: 'ls .env > /dev/null && cat .env', balanced: deny, yolo: ask }

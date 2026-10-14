@@ -290,6 +290,8 @@ interface Scope {
   downloads: Map<string, string>;
   /** Files written earlier in this same command (`echo ... > x.sh`). */
   written: Set<string>;
+  /** `$1`, `$2`, `"$@"` inside a script, when its arguments are known. */
+  positional?: string[];
 }
 
 interface Ctx {
@@ -638,7 +640,7 @@ class Analyzer {
       directScript = head;
     }
     this.push(inv);
-    if (directScript) this.runScript(inv, directScript, scope, ctx, false, 'shebang');
+    if (directScript) this.runScript(inv, directScript, scope, ctx, false, 'shebang', args);
     this.trackDownloads(program, args, redirects, scope);
 
     const nested = (via: string): Ctx => ({ ...ctx, depth: ctx.depth + 1, via: [...ctx.via, via] });
@@ -772,7 +774,7 @@ class Analyzer {
       case 'batch': {
         // The commands come from `-f file` or from stdin, and run later in a shell.
         const f = args.findIndex((w) => w.value === '-f');
-        if (f >= 0 && args[f + 1]) this.runScript(inv, args[f + 1]!, scope, ctx, false, true);
+        if (f >= 0 && args[f + 1]) this.runScript(inv, args[f + 1]!, scope, ctx, false, true, []);
         else if (!args.some((w) => /^-[lrdcq]$/.test(w.value)))
           this.stdinCode(inv, stdin, scope, nested(program), true);
         return program;
@@ -823,6 +825,7 @@ class Analyzer {
         return program;
       }
       case 'eval':
+        if (ctx.scripts?.length && resetsArguments(args)) return program;
         this.codeString(args, text, scope, nested('eval'), stdin);
         return program;
       case 'source':
@@ -830,7 +833,8 @@ class Analyzer {
         const file = args[0];
         if (file) {
           inv.codeFrom = this.codeSources(file, scope);
-          this.runScript(inv, file, scope, ctx, true, true);
+          const rest = args.slice(1);
+          this.runScript(inv, file, scope, ctx, true, true, rest.length > 0 ? rest : undefined);
         }
         return program;
       }
@@ -944,7 +948,7 @@ class Analyzer {
     // `sh -s args...` reads its code from stdin and treats the rest as arguments.
     if (first && !stdinMode) {
       inv.codeFrom.push(...this.codeSources(first, scope));
-      this.runScript(inv, first, scope, ctx, false, true);
+      this.runScript(inv, first, scope, ctx, false, true, args.slice(i + 1));
       return;
     }
     // `bash < x.sh` and `sh -s < x.sh` read the script from a file.
@@ -953,7 +957,7 @@ class Analyzer {
       if (!input.resolved) {
         inv.dynamic = true;
         inv.note = 'runs a script whose name is only known at run time';
-      } else this.runScript(inv, literal(input.target), scope, ctx, false, true);
+      } else this.runScript(inv, literal(input.target), scope, ctx, false, true, args.slice(i));
       return;
     }
     this.stdinCode(inv, stdin, scope, ctx, true);
@@ -1160,6 +1164,8 @@ class Analyzer {
     ctx: Ctx,
     sameScope: boolean,
     parse: boolean | 'shebang',
+    /** The script's own arguments, which `$1` and `"$@"` stand for inside it. */
+    scriptArgs?: EvalWord[],
   ): void {
     if (!file.resolved || file.subPrograms.length > 0) return;
     const abs = resolveIn(scope.cwd, file.value, this.opts.home);
@@ -1187,10 +1193,15 @@ class Analyzer {
     if (script.truncated) return unseen('is too large for belayd to check');
     if (ctx.scripts?.includes(abs)) return; // it runs itself: already being checked
     if (ctx.depth >= MAX_DEPTH) return unseen('runs other scripts nested too deeply to check');
-    const content = script.text;
+    const target = sameScope ? scope : cloneScope(scope);
+    const callerArgs = target.positional;
+    if (scriptArgs) {
+      if (scriptArgs.every((w) => w.resolved)) target.positional = scriptArgs.map((w) => w.value);
+      else delete target.positional;
+    }
     this.source(
-      content,
-      sameScope ? scope : cloneScope(scope),
+      script.text,
+      target,
       {
         ...ctx,
         depth: ctx.depth + 1,
@@ -1199,6 +1210,11 @@ class Analyzer {
       },
       undefined,
     );
+    // `source x.sh a b` sets the arguments only while x.sh runs.
+    if (sameScope && scriptArgs) {
+      if (callerArgs) target.positional = callerArgs;
+      else delete target.positional;
+    }
   }
 
   private trackWrites(
@@ -1272,6 +1288,16 @@ class Analyzer {
       case 'tee':
         if (program === 'cat' && args.some((w) => w.value !== '-')) return undefined;
         return stdin?.text;
+      case 'mktemp': {
+        // A fresh name in the temporary folder, or next to the template it was given.
+        const flag = (w: EvalWord | undefined) => w?.value === '-p' || w?.value === '--tmpdir';
+        const dir = args.find((_, i) => flag(args[i - 1]));
+        const template = args.find((w) => !w.value.startsWith('-') && w !== dir);
+        if (template?.value.includes('/'))
+          return `${path.posix.dirname(template.value)}/tmp.belayd\n`;
+        const base = dir?.value ?? this.opts.env?.TMPDIR ?? '/tmp';
+        return `${base.replace(/\/+$/, '')}/tmp.belayd\n`;
+      }
       case 'base64': {
         const decode = args.some((w) => ['-d', '-D', '--decode'].includes(w.value));
         if (!decode || stdin?.text === undefined) return undefined;
@@ -1381,6 +1407,11 @@ class Analyzer {
       append([value.replace(/[ \t\n]+/g, FIELD_BREAK)]);
     };
     for (const part of parts) {
+      // `"$@"` is one word per argument, and no word at all when there are none.
+      if (part.type === 'DoubleQuoted' && scope.positional && isAllArguments(part)) {
+        append([scope.positional.join(FIELD_BREAK)]);
+        continue;
+      }
       if (
         part.type !== 'SimpleExpansion' &&
         part.type !== 'ParameterExpansion' &&
@@ -1487,6 +1518,13 @@ class Analyzer {
 
   private lookup(name: string, scope: Scope): string | undefined {
     if (name === 'PWD') return scope.cwd;
+    if (/^[1-9@*#]$/.test(name)) {
+      const args = scope.positional;
+      if (!args) return undefined;
+      if (name === '#') return String(args.length);
+      if (name === '@' || name === '*') return args.join(' ');
+      return args[Number(name) - 1] ?? '';
+    }
     const v = scope.vars.get(name);
     return v === null ? undefined : v;
   }
@@ -1570,6 +1608,7 @@ function cloneScope(scope: Scope): Scope {
     aliases: new Map(scope.aliases),
     downloads: scope.downloads, // shared: a download in a subshell still lands on disk
     written: scope.written,
+    ...(scope.positional ? { positional: scope.positional } : {}),
   };
 }
 
@@ -1738,4 +1777,39 @@ function callArguments(code: string, names: readonly string[], needParen: boolea
     re.lastIndex = end + 1;
   }
   return found;
+}
+
+/** True for `"$@"` and `"${@}"`. */
+function isAllArguments(part: WordPart): boolean {
+  const inner = (part as { parts?: readonly WordPart[] }).parts;
+  if (inner?.length !== 1) return false;
+  const only = inner[0]!;
+  return (
+    (only.type === 'SimpleExpansion' && only.text === '$@') ||
+    (only.type === 'ParameterExpansion' &&
+      only.parameter === '@' &&
+      !only.prefix &&
+      !only.index &&
+      !only.operation)
+  );
+}
+
+const TEXT_TOOLS = new Set(['printf', 'echo', 'xargs', 'sed', 'tr', 'cat']);
+
+/**
+ * Wrapper scripts such as gradlew rebuild their arguments with
+ * `eval "set -- $(printf '%s\n' "$JAVA_OPTS" | xargs -n1 | sed ...)" '"$@"'`. The eval
+ * only resets the arguments, from the output of text tools, so it runs no command of
+ * its own. Only used for scripts read from disk, never for a command typed by the agent.
+ */
+function resetsArguments(args: EvalWord[]): boolean {
+  const first = args[0];
+  if (!first || !/^["']?set -- /.test(first.text)) return false;
+  const open = first.text.indexOf('$(');
+  const close = first.text.lastIndexOf(')');
+  if (open < 0 || close < open) return false;
+  const outside = first.text.slice(0, open) + first.text.slice(close + 1);
+  if (/[$`]/.test(outside)) return false;
+  if (!first.subPrograms.every((p) => TEXT_TOOLS.has(p))) return false;
+  return args.slice(1).every((w) => w.resolved);
 }

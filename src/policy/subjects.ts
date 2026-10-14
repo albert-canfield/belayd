@@ -115,6 +115,22 @@ const WRITES_ALL = new Set([
   'mkfifo',
   'mknod',
 ]);
+/** Programs that look at names and metadata, never at what a file holds. */
+const LISTS_ONLY = new Set([
+  'ls',
+  'stat',
+  'du',
+  'tree',
+  'eza',
+  'exa',
+  'lsattr',
+  'realpath',
+  'readlink',
+  'basename',
+  'dirname',
+  'cd',
+  'pushd',
+]);
 /** Programs whose first positional is a mode or owner, and change the rest. */
 const WRITES_AFTER_FIRST = new Set(['chmod', 'chown', 'chgrp']);
 /** Programs that change only their last path argument (the destination). */
@@ -390,7 +406,11 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     }
   }
 
-  const reads = new Set([...paths].filter((p) => !writes.has(p) || program === 'mv'));
+  const reads = new Set(
+    LISTS_ONLY.has(program ?? '')
+      ? []
+      : [...paths].filter((p) => !writes.has(p) || program === 'mv'),
+  );
   explicitReads.forEach((p) => reads.add(p));
 
   const domains = new Set<string>();
