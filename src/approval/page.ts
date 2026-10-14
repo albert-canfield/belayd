@@ -67,7 +67,7 @@ export function renderPage(nonce: string): string {
   <footer>Nothing leaves this machine. No answer before the timer runs out counts as a no.</footer>
 </div>
 <script nonce="${nonce}">
-  const AGENTS = { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', gemini: 'Gemini CLI', mcp: 'MCP server', cli: 'belayd' };
+  const AGENTS = { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot CLI', gemini: 'Gemini CLI', mcp: 'MCP server', cli: 'belayd' };
   const $ = (id) => document.getElementById(id);
   let state = { pending: [], recent: [] };
   let fetchedAt = Date.now();

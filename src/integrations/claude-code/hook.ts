@@ -11,7 +11,7 @@ import type { Action } from '../../policy/types.js';
 export type ClaudeHookInput = HookInput;
 
 /** Agents that load Claude Code hooks from `.claude/settings*.json`. */
-export type Host = 'claude-code' | 'cursor';
+export type Host = 'claude-code' | 'cursor' | 'copilot';
 
 export const claudeDialect: Dialect = {
   agent: (input, env) => detectHost(input, env),
@@ -19,11 +19,23 @@ export const claudeDialect: Dialect = {
   workspace: (env) => env.CLAUDE_PROJECT_DIR,
   // Claude Code shows its own prompt in attended sessions. `claude -p` and other
   // unattended runs set CLAUDE_CODE_SESSION_ATTENDED=0 and would auto-deny instead.
-  // Cursor does not enforce "ask" from this hook at all.
+  // Cursor does not enforce "ask" from this hook at all, and Copilot CLI only does in
+  // interactive sessions, which the hook cannot tell apart.
   canAskNatively: (agent, env) =>
     agent === 'claude-code' && env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
-  respond(answer, reason) {
+  respond(answer, reason, detail) {
     if (answer === 'pass') return { stdout: '', exitCode: 0 };
+    // Copilot CLI reads only a top-level permissionDecision and ignores Claude Code's
+    // nested form, so a deny there also exits 2, which it always treats as a deny.
+    if (detail.agent === 'copilot') {
+      const stdout = JSON.stringify({
+        permissionDecision: answer,
+        permissionDecisionReason: reason,
+      });
+      return answer === 'deny'
+        ? { stdout, stderr: `${reason}\n`, exitCode: 2 }
+        : { stdout, exitCode: 0 };
+    }
     return preToolUseDecision(answer, reason);
   },
 };
@@ -34,6 +46,9 @@ export function handleClaudeCode(raw: string, deps: HandleDeps): Promise<HookRes
 
 export function detectHost(input: HookInput, env: NodeJS.ProcessEnv): Host {
   if (input.cursor_version || env.CURSOR_VERSION) return 'cursor';
+  // Copilot CLI runs `.claude/settings*.json` hooks with a payload that has an ISO
+  // timestamp and no transcript, which Claude Code always sends.
+  if (typeof input.timestamp === 'string' && input.transcript_path === undefined) return 'copilot';
   return 'claude-code';
 }
 

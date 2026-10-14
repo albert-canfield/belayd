@@ -22,6 +22,10 @@ export interface HookInput {
   permission_mode?: string;
   /** Present when Cursor runs a Claude Code hook through its compatibility layer. */
   cursor_version?: string;
+  /** Claude Code always sends this; Copilot CLI's compatible payload does not. */
+  transcript_path?: string;
+  /** Copilot CLI sends an ISO 8601 string here. */
+  timestamp?: unknown;
 }
 
 /** What belayd finally tells the agent. */
@@ -37,7 +41,11 @@ export interface Dialect {
   /** Whether answering `ask` makes the agent show its own prompt. */
   canAskNatively(agent: AgentId, env: NodeJS.ProcessEnv): boolean;
   /** Turns belayd's answer into what this agent expects on stdout. */
-  respond(answer: Answer, reason: string, detail: { approvedBy?: string }): HookResult;
+  respond(
+    answer: Answer,
+    reason: string,
+    detail: { approvedBy?: string; agent?: AgentId },
+  ): HookResult;
 }
 
 export interface HandleDeps {
@@ -173,9 +181,9 @@ export async function handleToolHook(
         decision.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
       await audit(decision.verdict, { ...facts, ...(snapshot ? { snapshot } : {}) });
       if (decision.verdict === 'deny') {
-        return dialect.respond('deny', blocked(decision.reason, rule), {});
+        return dialect.respond('deny', blocked(decision.reason, rule), { agent });
       }
-      return dialect.respond(decision.verdict, `belayd: ${decision.reason}${rule}`, {});
+      return dialect.respond(decision.verdict, `belayd: ${decision.reason}${rule}`, { agent });
     }
 
     // Waiting for a person is expected to take a while; it has its own deadline.
@@ -201,6 +209,7 @@ export async function handleToolHook(
       ...(snapshot ? { snapshot } : {}),
     });
     return dialect.respond(resolution.verdict, resolution.reason, {
+      agent,
       ...(resolution.answeredBy ? { approvedBy: resolution.answeredBy } : {}),
     });
   } catch (err) {
@@ -214,7 +223,7 @@ export async function handleToolHook(
       return dialect.respond(
         'pass',
         `belayd error, continuing because failMode is open: ${message}`,
-        {},
+        { agent },
       );
     }
     await audit('deny', { verdict: 'error', reason: `belayd error: ${message}` });
@@ -222,7 +231,7 @@ export async function handleToolHook(
       'deny',
       `belayd hit an error and is blocking this action to be safe: ${message}. ` +
         'Ask the user to run `belayd doctor`.',
-      {},
+      { agent },
     );
   } finally {
     watchdog.stop();

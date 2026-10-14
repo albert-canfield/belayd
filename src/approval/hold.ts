@@ -120,9 +120,13 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
 
 function agentName(agent: string): string {
   return (
-    { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', mcp: 'An MCP client' }[
-      agent
-    ] ?? agent
+    {
+      'claude-code': 'Claude Code',
+      codex: 'Codex',
+      cursor: 'Cursor',
+      copilot: 'Copilot CLI',
+      mcp: 'An MCP client',
+    }[agent] ?? agent
   );
 }
 

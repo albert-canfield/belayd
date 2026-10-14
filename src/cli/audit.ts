@@ -9,6 +9,7 @@ const AGENTS: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
   cursor: 'Cursor',
+  copilot: 'Copilot CLI',
   gemini: 'Gemini CLI',
   mcp: 'MCP',
 };

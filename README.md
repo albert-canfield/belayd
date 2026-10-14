@@ -152,6 +152,7 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 | Codex CLI | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
+| Copilot CLI | Partly, not yet tried live | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI runs Claude Code's hooks from the repository |
 | Gemini CLI, Antigravity CLI, OpenCode | Planned | | | | |
 
 Codex can't show its own prompt from a hook (it treats a hook's "ask" as an error and runs the command), so belayd never sends it one: it holds the call and asks you itself.

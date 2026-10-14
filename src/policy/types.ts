@@ -1,4 +1,4 @@
-export type AgentId = 'claude-code' | 'codex' | 'cursor' | 'gemini' | 'mcp' | 'cli';
+export type AgentId = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'gemini' | 'mcp' | 'cli';
 
 /** What an agent wants to do, independent of which agent asked. */
 export type Action =

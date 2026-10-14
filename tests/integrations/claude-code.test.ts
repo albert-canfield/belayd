@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decide, listPending } from '../../src/approval/store.js';
 import { trustFile } from '../../src/policy/trust.js';
-import { handleClaudeCode, toAction } from '../../src/integrations/claude-code/hook.js';
+import { detectHost, handleClaudeCode, toAction } from '../../src/integrations/claude-code/hook.js';
 
 let workspace: string;
 let env: NodeJS.ProcessEnv;
@@ -202,5 +202,39 @@ describe('Claude Code hook output', () => {
       );
       expect(decisionOf(r.stdout)).toBe('ask');
     });
+  });
+});
+
+describe('Copilot CLI running the Claude Code hook', () => {
+  // Copilot CLI's payload for hooks from .claude/settings*.json: Claude tool names, an
+  // ISO timestamp, no transcript_path.
+  const copilot = { timestamp: '2026-10-14T03:00:00.000Z' };
+
+  it('is told apart from Claude Code and Cursor', () => {
+    expect(detectHost({ ...copilot }, {})).toBe('copilot');
+    expect(detectHost({ ...copilot, transcript_path: '/t.jsonl' }, {})).toBe('claude-code');
+    expect(detectHost({}, {})).toBe('claude-code');
+    expect(detectHost({ ...copilot, cursor_version: '2.1' }, {})).toBe('cursor');
+  });
+
+  it('denies with exit 2 and a top-level decision, the form Copilot CLI reads', async () => {
+    const r = await call({ ...copilot, tool_name: 'Bash', tool_input: { command: 'rm -rf ~' } });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/belayd blocked this/);
+    expect(JSON.parse(r.stdout).permissionDecision).toBe('deny');
+  });
+
+  it('reads Copilot argument names', async () => {
+    const r = await call({
+      ...copilot,
+      tool_name: 'Read',
+      tool_input: { path: `${workspace}/.env` },
+    });
+    expect(r.exitCode).toBe(2);
+  });
+
+  it('stays silent for normal work', async () => {
+    const r = await call({ ...copilot, tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    expect(r).toMatchObject({ stdout: '', exitCode: 0 });
   });
 });
