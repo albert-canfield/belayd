@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #0c0a09; --fg: #fafaf9; --muted: #a8a29e; --dim: #78716c; --rope: #ea580c; --card: #161412; --line: #2a2623; --red: #f87171; --yellow: #facc15; --green: #4ade80; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; background: var(--bg); overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: var(--fg); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card { position: absolute; inset: 0; display: none; }
+  body[data-card="intro"] #intro, body[data-card="value"] #value, body[data-card="outro"] #outro { display: block; }
+  svg.rope { position: absolute; inset: 0; }
+  .wordmark { font-weight: 800; letter-spacing: -6px; line-height: 1; }
+  .wordmark span { color: var(--rope); }
+  .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+
+  /* intro */
+  #intro .wordmark { font-size: 168px; }
+  #intro .tag1 { margin-top: 26px; font-size: 44px; font-weight: 650; }
+  #intro .tag2 { font-size: 44px; font-weight: 650; color: var(--rope); }
+  #intro .sub { margin-top: 30px; font-size: 24px; color: var(--muted); }
+  .chips { margin-top: 30px; display: flex; gap: 12px; justify-content: center; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 9px 18px; font-size: 19px; color: #e7e5e4; }
+
+  /* value */
+  #value h2 { font-size: 46px; font-weight: 750; letter-spacing: -1px; }
+  #value h2 em { font-style: normal; color: var(--rope); }
+  #value .lead { margin-top: 14px; font-size: 22px; color: var(--muted); }
+  .cols { margin-top: 44px; display: flex; gap: 22px; }
+  .col { width: 352px; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px 26px 22px; }
+  .col .badge { font-size: 22px; font-weight: 700; }
+  .col h3 { margin-top: 10px; font-size: 25px; font-weight: 700; }
+  .col p { margin-top: 12px; font-size: 18px; line-height: 1.55; color: var(--muted); }
+  .col code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; color: #e7e5e4; background: #211e1b; padding: 2px 7px; border-radius: 6px; }
+  .red { color: var(--red); } .yellow { color: var(--yellow); } .green { color: var(--green); }
+
+  /* outro */
+  #outro .wordmark { font-size: 96px; }
+  #outro .lead { margin-top: 18px; font-size: 30px; font-weight: 650; }
+  .term { margin-top: 34px; width: 640px; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .term .bar { display: flex; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .term .bar i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .term pre { padding: 20px 24px 22px; font-size: 24px; line-height: 1.7; }
+  .term .p { color: var(--rope); }
+  .term .c { color: var(--dim); }
+  #outro .fine { margin-top: 28px; font-size: 20px; color: var(--muted); }
+  #outro .url { margin-top: 10px; font-size: 20px; color: #e7e5e4; }
+</style>
+</head>
+<body data-card="intro">
+  <svg class="rope" width="1280" height="720" viewBox="0 0 1280 720">
+    <path d="M -20 560 C 260 690, 470 230, 700 110 S 1100 60, 1320 190" fill="none" stroke="#ea580c" stroke-opacity="0.22" stroke-width="3" stroke-dasharray="1 9" stroke-linecap="round"/>
+  </svg>
+
+  <section class="card" id="intro">
+    <div class="center">
+      <div class="wordmark">belay<span>d</span></div>
+      <div class="tag1">Let your agent climb.</div>
+      <div class="tag2">belayd catches the fall.</div>
+      <div class="sub">The safety layer for AI coding agents. One policy, every agent.</div>
+      <div class="chips">
+        <span class="chip">Claude Code</span><span class="chip">Codex</span><span class="chip">Copilot CLI</span><span class="chip">Gemini CLI</span><span class="chip">MCP servers</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="value">
+    <div class="center">
+      <h2>Your agent runs with <em>your</em> permissions.</h2>
+      <div class="lead">belayd reads every command before it runs.</div>
+      <div class="cols">
+        <div class="col">
+          <div class="badge red">✖ blocked</div>
+          <h3>The disasters</h3>
+          <p><code>rm -rf ~</code>, <code>curl … | sh</code>, reading <code>.env</code>, even hidden behind variables and <code>bash -c</code>.</p>
+        </div>
+        <div class="col">
+          <div class="badge yellow">? asks you</div>
+          <h3>The risky ones</h3>
+          <p>Force pushes, <code>sudo</code>, publishing, dropping tables. In your agent's prompt, a web page or a dialog.</p>
+        </div>
+        <div class="col">
+          <div class="badge green">↺ undo</div>
+          <h3>The rest</h3>
+          <p>Every file change is snapshotted, and every step is logged. One command takes it back.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="outro">
+    <div class="center">
+      <div class="wordmark">belay<span>d</span></div>
+      <div class="lead">Two minutes from install to your first block.</div>
+      <div class="term">
+        <div class="bar"><i style="background:#ef4444cc"></i><i style="background:#eab308cc"></i><i style="background:#22c55ecc"></i></div>
+<pre class="mono"><span class="p">$</span> npm install -g belayd
+<span class="p">$</span> belayd init
+<span style="color:#4ade80">✔</span> <span class="c">belayd is on for Claude Code and Codex.</span></pre>
+      </div>
+      <div class="fine">Open source · MIT · Runs on your machine, nothing leaves it</div>
+      <div class="url mono">github.com/albert-canfield/belayd</div>
+    </div>
+  </section>
+
+  <script>
+    const card = new URLSearchParams(location.search).get('card');
+    if (card) document.body.dataset.card = card;
+  </script>
+</body>
+</html>

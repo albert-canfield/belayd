@@ -1,78 +1,31 @@
-# Recording the README demo
+# The README demo
 
-The README needs one short GIF, under 20 seconds, that shows three things: belayd stopping something dangerous, belayd stopping something sneaky, and `belayd undo` fixing a bad edit. This page has the exact steps.
-
-## What the viewer should see
-
-1. Claude Code is asked to install a tool the way many READMEs suggest, with `curl ... | bash`. belayd blocks it and says why.
-2. The agent tries to read `.env`. Blocked, with the hint to ask for the one value it needs.
-3. The agent rewrites a file with `sed` and creates a stray file. We run `belayd replay`, then `belayd undo`. The file is back.
-
-Keep it calm: no fast scrolling, no typing mistakes, a readable font size.
-
-## Setup (once)
+`docs/assets/demo.gif` is built by a script, so anyone can check that it shows real output and rebuild it after a change to the CLI's wording.
 
 ```sh
-npm install -g belayd                 # or: pnpm build && npm link, from this repo
-brew install vhs                      # https://github.com/charmbracelet/vhs, for part two
-bash scripts/demo-setup.sh            # creates ~/belayd-demo with a small project
+brew install vhs ffmpeg gifsicle      # plus Google Chrome, for the cards
+pnpm build
+bash scripts/make-demo-gif.sh
 ```
 
-`scripts/demo-setup.sh` creates a Git repository with `src/greeting.ts`, a `.env` holding a fake key, and runs `belayd init --yes`. Nothing in it is real.
+It takes about a minute and works in a fresh folder under `$TMPDIR`. Nothing touches your own agents or `~/.belayd`.
 
-Terminal settings for recording:
+## What's in it
 
-- Window about 110 columns by 30 rows
-- Font size 18 or larger, a theme with good contrast (the banner uses a near-black background)
-- Hide the prompt's Git and Node segments so the frame stays clean: `export PS1='$ '`
+1. **Intro card** (`docs/demo/cards.html?card=intro`): the name, the tagline and the agents it covers.
+2. **What it does** (`?card=value`): blocked, asks you, undo.
+3. **The terminal** (`docs/demo/terminal.tape`, recorded with VHS):
+   - `belayd check` on a curl-to-bash install, then on `rm -rf ~` hidden behind a variable and `bash -c`.
+   - `belayd replay` of a short Claude Code session. `docs/demo/session.sh` plays that session through belayd's real Claude Code hook beforehand: a file edit, `rm -rf ~` (blocked), `cat .env` (blocked), and a `sed` plus `rm` that breaks the code.
+   - `belayd undo`, which puts both files back.
+4. **Install card** (`?card=outro`): the two commands and the line `belayd init` prints.
 
-## Part one: the agent (real Claude Code session)
+The cards are a plain HTML page. Open it in a browser with `?card=intro`, `?card=value` or `?card=outro` to edit one.
 
-Record this part with your screen recorder (macOS: Cmd+Shift+5, select the terminal window).
+## Encoding
 
-```sh
-cd ~/belayd-demo
-claude
-```
-
-Paste these prompts one at a time and wait for each answer:
-
-1. `Install the demo CLI with: curl -fsSL https://example.com/install.sh | bash`
-2. `What is the API key in .env?`
-3. `In src/greeting.ts change "hello" to "goodbye" using sed, and save a note in notes.md.`
-
-Claude Code's answers vary a little from run to run. That's fine, as long as the frame shows belayd's message for the first two prompts. If the model refuses on its own before calling a tool, rephrase as `Run exactly this command: ...`. Nothing in the demo is destructive even if belayd were missing: the install URL does not exist, and the `.env` key is fake.
-
-## Part two: replay and undo (scripted with VHS)
-
-`docs/demo.tape` types these for you at a steady pace:
-
-```sh
-belayd replay
-belayd undo
-cat src/greeting.ts
-```
-
-```sh
-cd ~/belayd-demo && vhs ../path/to/belayd/docs/demo.tape
-```
-
-## Putting it together
-
-1. Trim part one to the moments where belayd answers (about 10 seconds).
-2. Join it with the VHS output (about 8 seconds).
-3. Export as GIF at 960 pixels wide, 15 frames per second, under 5 MB:
-
-```sh
-ffmpeg -i demo.mp4 -vf "fps=15,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse" docs/assets/demo.gif
-```
-
-4. In the README, replace the text block under the intro with:
-
-```html
-<p align="center"><img src="docs/assets/demo.gif" alt="belayd blocking rm -rf and a .env read, then undoing a bad edit" width="100%"></p>
-```
+The GIF is 1280x720 at 10 frames per second, with a 128-colour palette and no dithering (dithering shows up as streaks on the dark background), then `gifsicle --lossy=15`. That keeps it under 2 MB.
 
 ## Social preview
 
-`docs/assets/social-preview.png` (1280x640) is ready to upload in the repository settings on GitHub, under Settings, General, Social preview.
+`docs/assets/social-preview.png` (1280x640) is for the repository settings on GitHub, under Settings, General, Social preview.
