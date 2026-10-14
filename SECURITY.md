@@ -36,7 +36,7 @@ belayd catches mistakes made by an AI coding agent that you mostly trust, asks y
 ## How belayd fails
 
 - Any error inside belayd blocks the action and says so.
-- Hooks are installed with Claude Code's `onFailure: "block"` (version 2.1.295 and later) or with a shell guard that turns a crash into a block. Codex hooks always use the shell guard, because Codex fails open on hook errors.
+- Hooks are installed with Claude Code's `onFailure: "block"` (version 2.1.295 and later) or with a shell guard that turns a crash into a block. Codex hooks always use the shell guard, because Codex fails open on hook errors. Copilot CLI blocks on hook errors but lets a timed-out hook through, so its hooks also get belayd's own deadline.
 - belayd always answers a few seconds before the agent's hook timeout, so a slow approval ends in a deny from belayd rather than a timeout the agent might treat as "go ahead".
 - Checking a call takes milliseconds. If it ever takes more than 20 seconds (a pathological command, a stuck file read), a watchdog thread stops the hook, which the installed hooks turn into a block. The analysis itself has fixed limits on how much code it reads; past them it asks.
 - A broken or invalid `belayd.yaml` blocks every action until it is fixed. `belayd doctor` says what is wrong.

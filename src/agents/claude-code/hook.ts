@@ -1,7 +1,9 @@
 import { handleToolHook, type HandleDeps } from '../../hook/handle.js';
 import type { HookResult } from '../../hook/types.js';
 import type { Action, AgentId } from '../../policy/types.js';
+import { findWorkspace } from '../../util/paths.js';
 import { asRecord } from '../common.js';
+import { copilotHooksInstalled } from '../copilot/setup.js';
 import type { Answer, Dialect } from '../types.js';
 
 /**
@@ -28,6 +30,10 @@ export const claudeDialect: Dialect = {
     };
   },
   agent: (payload, env) => detectHost(payload, env),
+  // Copilot CLI also runs these hooks. When belayd's own Copilot CLI hooks are installed
+  // too, those check the call, and this one stays out of the way.
+  handledElsewhere: (agent, event, env) =>
+    agent === 'copilot' && copilotHooksInstalled(findWorkspace(event.cwd ?? process.cwd()), env),
   toAction: (tool, input, cwd) => toAction(tool, asRecord(input), cwd),
   workspace: (env) => env.CLAUDE_PROJECT_DIR,
   // Claude Code shows its own prompt in attended sessions. `claude -p` and other

@@ -66,9 +66,10 @@ export const AGENTS: readonly AgentEntry[] = [
     id: 'copilot',
     name: 'Copilot CLI',
     aliases: ['copilot-cli', 'github-copilot'],
-    support: 'host',
-    runsHooksOf: 'claude-code',
+    support: 'hooks',
     detect: (env) => exists(env.COPILOT_HOME ?? path.join(home(env), '.copilot')),
+    dialect: () => import('./copilot/hook.js').then((m) => m.copilotDialect),
+    setup: () => import('./copilot/setup.js').then((m) => m.copilotSetup),
   },
   {
     id: 'gemini',

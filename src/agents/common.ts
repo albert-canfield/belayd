@@ -165,15 +165,57 @@ export function findMatcherHook(
   return undefined;
 }
 
+/*
+ * Hook files where each event lists its hook entries directly, the format Copilot CLI
+ * uses: `{ "hooks": { "preToolUse": [{ "type": "command", "bash": "..." }] } }`.
+ */
+
+/** A copy with every belayd hook removed, then `add` added (if given). */
+export function mergeFlatHooks(
+  settings: Settings,
+  add: Record<string, unknown> | undefined,
+): Settings {
+  const next = structuredClone(settings);
+  const hooks = { ...(asRecord(next.hooks) as Record<string, unknown[] | undefined>) };
+  for (const [event, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue;
+    const kept = entries.filter((h) => !isBelaydHandler(h));
+    if (kept.length > 0) hooks[event] = kept;
+    else delete hooks[event];
+  }
+  for (const [event, entry] of Object.entries(add ?? {}))
+    if (entry) hooks[event] = [...(hooks[event] ?? []), entry];
+  if (Object.keys(hooks).length > 0) next.hooks = hooks;
+  else delete next.hooks;
+  return next;
+}
+
+/** belayd's entry for an event in a flat hook file, if installed. */
+export function findFlatHook(
+  settings: Settings,
+  event: string,
+): Record<string, unknown> | undefined {
+  const entries = asRecord(settings.hooks)[event];
+  return Array.isArray(entries)
+    ? (entries.find(isBelaydHandler) as Record<string, unknown> | undefined)
+    : undefined;
+}
+
 /** The two absolute paths a hook command runs: node and belayd's bin.js. */
 export function pinnedPaths(entry: {
   command?: unknown;
   args?: unknown;
   exec?: unknown;
+  bash?: unknown;
 }): string[] {
   if (Array.isArray(entry.args) && typeof (entry.exec ?? entry.command) === 'string')
     return [String(entry.exec ?? entry.command), String(entry.args[0])];
-  const command = typeof entry.command === 'string' ? entry.command : '';
+  const command =
+    typeof entry.command === 'string'
+      ? entry.command
+      : typeof entry.bash === 'string'
+        ? entry.bash
+        : '';
   const words = [...command.matchAll(/'([^']+)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? '');
   return words.slice(0, 2).filter((p) => p.startsWith('/'));
 }

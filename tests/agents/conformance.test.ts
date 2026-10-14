@@ -22,8 +22,8 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-const run = (dialect: Dialect, raw: string, timeoutSec = 30, extra: NodeJS.ProcessEnv = {}) =>
-  handleToolHook(raw, { env: { ...env, ...extra }, timeoutSec, event: 'pre' }, dialect);
+const run = (dialect: Dialect, raw: string, timeoutSec = 30, event = 'pre') =>
+  handleToolHook(raw, { env, timeoutSec, event }, dialect);
 const pre = (dialect: Dialect, command: string) =>
   JSON.stringify(dialect.sample('pre', command, dir));
 
@@ -59,7 +59,13 @@ describe.each(hookAgents().map((a) => [a.name, a] as const))('%s', (_name, agent
   });
 
   it('records what ran after the tool call', async () => {
-    const r = await run(dialect, JSON.stringify(dialect.sample('post', 'npm test', dir)));
+    expect(dialect.parse(dialect.sample('post', 'npm test', dir), 'post').phase).toBe('post');
+    const r = await run(
+      dialect,
+      JSON.stringify(dialect.sample('post', 'npm test', dir)),
+      30,
+      'post',
+    );
     expect(r.exitCode).toBe(0);
     expect(dialect.verdictOf(r)).toBe('pass');
     expect(fs.existsSync(path.join(env.BELAYD_HOME!, 'audit.db'))).toBe(true);

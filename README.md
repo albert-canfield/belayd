@@ -14,7 +14,7 @@
 
 Coding agents are fast, confident, and running with your permissions. Most days that's great. Then one of them force pushes to main, reads your `.env` into its context, or tidies up the wrong folder, and you find out afterwards.
 
-**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex and any MCP server.
+**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI and any MCP server.
 
 ```text
 ● Bash  X=rm; bash -c "$X -rf ~"
@@ -153,7 +153,7 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 | Codex | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
-| Copilot CLI | Partly, not yet tried live | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI runs Claude Code's hooks from the repository |
+| Copilot CLI | ✓ (not yet tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
 | Gemini CLI, Antigravity CLI, OpenCode, Ollama | Planned | | | | |
 <!-- agents:end -->
 
