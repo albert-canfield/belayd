@@ -34,8 +34,7 @@ jobs:
         run: node scripts/bench-hook.mjs --runs 30 --max-overhead 100
       - name: Packed tarball works with npx
         run: |
-          npm pack --silent --pack-destination "$RUNNER_TEMP"
+          tgz=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
           cd "$RUNNER_TEMP"
-          npx --yes --package "$RUNNER_TEMP/belayd-$(node -p "require('$GITHUB_WORKSPACE/package.json').version").tgz" \
-            belayd check 'rm -rf ~' | tee out.txt
+          npx --yes --package "$RUNNER_TEMP/$tgz" belayd check 'rm -rf ~' | tee out.txt
           grep -q deny out.txt
