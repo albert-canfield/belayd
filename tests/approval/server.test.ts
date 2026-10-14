@@ -54,6 +54,18 @@ describe('approval page server', () => {
     expect(readUiState(home)?.port).toBe(server.port);
   });
 
+  it('treats a page started by another belayd version as not running', () => {
+    const file = path.join(home, 'ui.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...state, version: '0.0.0-old' }));
+    expect(readUiState(home)).toBeUndefined();
+  });
+
+  it('keeps only a hash of each link key on disk', () => {
+    const key = createLinkKey(home);
+    expect(fs.readdirSync(path.join(home, 'ui-links'))).not.toContain(key);
+  });
+
   it('turns away requests without the key', async () => {
     expect((await fetch(`${base}/`)).status).toBe(401);
     expect((await fetch(`${base}/api/state`)).status).toBe(401);

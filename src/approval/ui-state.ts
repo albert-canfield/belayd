@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { version } from '../version.js';
 
 /** "BELAY" on a phone keypad. */
 export const DEFAULT_PORT = 23529;
@@ -10,11 +11,19 @@ export interface UiState {
   pid: number;
   port: number;
   startedAt: number;
+  /** The belayd version serving the page. */
+  version?: string;
 }
 
+/**
+ * The running approval page, if any. A page started by another belayd version counts
+ * as not running: after an upgrade its links would not work, so a new one is started
+ * (on the next free port) and the old one exits when idle.
+ */
 export function readUiState(belaydHome: string): UiState | undefined {
   try {
     const state = JSON.parse(fs.readFileSync(path.join(belaydHome, 'ui.json'), 'utf8')) as UiState;
+    if (state.version !== version) return undefined;
     process.kill(state.pid, 0);
     return state;
   } catch {
@@ -22,9 +31,11 @@ export function readUiState(belaydHome: string): UiState | undefined {
   }
 }
 
-export function writeUiState(belaydHome: string, state: UiState): void {
+export function writeUiState(belaydHome: string, state: Omit<UiState, 'version'>): void {
   fs.mkdirSync(belaydHome, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(belaydHome, 'ui.json'), JSON.stringify(state), { mode: 0o600 });
+  fs.writeFileSync(path.join(belaydHome, 'ui.json'), JSON.stringify({ ...state, version }), {
+    mode: 0o600,
+  });
 }
 
 export function clearUiState(belaydHome: string, pid: number): void {
