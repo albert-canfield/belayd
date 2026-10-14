@@ -126,7 +126,8 @@ By default a hook that crashes, times out (default timeout 600 s), cannot start,
 3. `ask` is delegated to Claude Code's native prompt with belayd's reason in it. In headless runs (`claude -p`) belayd holds the call and waits for the web approval page.
 4. Contract tests replay recorded payloads per Claude Code version from `tests/fixtures/claude-code/`.
 
-5. **Host detection.** Cursor loads `.claude/settings*.json` hooks by default and maps tool names (Bash becomes Shell, Edit becomes Write), and Copilot CLI reads the repo's `.claude/settings*.json` too. The hook checks for `cursor_version` in the payload or `CURSOR_VERSION` in the environment (and the Copilot equivalents). If a native belayd integration is installed for that host, it does nothing. Otherwise it evaluates with the mapped tool names and resolves `ask` out of band, because Cursor does not enforce `ask` on `preToolUse`.
+5. **Who answers an ask.** Claude Code sets `CLAUDE_CODE_SESSION_ATTENDED` (undocumented, observed in 2.1.292): `1` in interactive sessions, `0` in `claude -p`. Only an explicit `0` makes belayd hold the call itself; anything else keeps Claude Code's native prompt, so older versions without the variable keep working as before. For the strongest guarantee in unattended runs, use `approval: { channels: [native, dialog] }` (see SECURITY.md).
+6. **Host detection.** Cursor loads `.claude/settings*.json` hooks by default and maps tool names (Bash becomes Shell, Edit becomes Write), and Copilot CLI reads the repo's `.claude/settings*.json` too. The hook checks for `cursor_version` in the payload or `CURSOR_VERSION` in the environment (and the Copilot equivalents). If a native belayd integration is installed for that host, it does nothing. Otherwise it evaluates with the mapped tool names and resolves `ask` out of band, because Cursor does not enforce `ask` on `preToolUse`.
 
 Effort: about 3 to 4 days including tests, on top of the policy engine.
 

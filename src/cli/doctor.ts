@@ -42,6 +42,16 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
   try {
     const policy = await loadPolicy({ workspace, belaydHome: state, noCache: true });
     policyTimeoutMs = policy.approval.timeoutMs;
+    // The hook trusts its compiled-policy cache. Make sure nobody changed it by hand.
+    const cached = await loadPolicy({ workspace, belaydHome: state });
+    if (JSON.stringify(cached) !== JSON.stringify(policy)) {
+      fs.rmSync(path.join(state, 'cache'), { recursive: true, force: true });
+      line(
+        'fail',
+        'The compiled policy cache did not match your policy files, so it was cleared',
+        'If you did not edit ~/.belayd/cache yourself, something else did. Check belayd log.',
+      );
+    }
     const count = policy.rules.final.length + policy.rules.user.length + policy.rules.preset.length;
     line('ok', `Policy: ${policy.name} (${count} rules)`);
     for (const w of policy.warnings) line('warn', w);

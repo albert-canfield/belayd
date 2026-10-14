@@ -107,3 +107,22 @@ describe('failMode', () => {
     expect(log.at(-1)?.reason).toMatch(/failMode: open/);
   });
 });
+
+describe('doctor and the policy cache', () => {
+  it('notices a tampered cache and clears it', () => {
+    hook(hookPayload(sb, 'Bash', { command: 'ls' }));
+    const dir = path.join(sb.env.BELAYD_HOME!, 'cache');
+    const [file] = fs.readdirSync(dir);
+    const policy = JSON.parse(fs.readFileSync(path.join(dir, file!), 'utf8'));
+    policy.rules.final = [];
+    policy.default = 'allow';
+    fs.writeFileSync(path.join(dir, file!), JSON.stringify(policy));
+    const r = belayd(sb, ['doctor']);
+    expect(r.stdout).toMatch(/cache did not match/);
+    // doctor's own smoke test rebuilds the cache afterwards, from the real policy.
+    const rebuilt = fs
+      .readdirSync(dir)
+      .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+    expect(rebuilt.every((p) => p.default !== 'allow' && p.rules.final.length > 0)).toBe(true);
+  });
+});
