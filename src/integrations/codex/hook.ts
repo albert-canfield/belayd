@@ -43,7 +43,8 @@ export function toCodexAction(tool: string, raw: unknown): Action {
   if (tool === 'apply_patch' && command !== undefined) {
     const files = parseApplyPatch(command);
     if (files.length > 0) return { kind: 'patch', files };
-    return { kind: 'tool', name: tool, input };
+    // A patch belayd cannot read could touch any file. Treat it as code it cannot see.
+    return { kind: 'shell', command: '$UNREADABLE_PATCH' };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   if (mcp) return { kind: 'mcp', server: mcp[1]!, tool: mcp[2]!, args: input };

@@ -17,7 +17,7 @@ export function parseApplyPatch(text: string): PatchFile[] {
   const files: PatchFile[] = [];
   let last: PatchFile | undefined;
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trimEnd();
+    const line = raw.trim();
     const m = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
     if (m) {
       last = { path: m[2]!.trim(), op: m[1]!.toLowerCase() as PatchFile['op'] };

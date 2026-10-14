@@ -28,6 +28,12 @@ describe('apply_patch parsing', () => {
     ]);
   });
 
+  it('accepts indented markers', () => {
+    expect(
+      parseApplyPatch('*** Begin Patch\n  *** Update File: belayd.yaml\n*** End Patch'),
+    ).toEqual([{ path: 'belayd.yaml', op: 'update' }]);
+  });
+
   it('works when the patch is wrapped in a heredoc', () => {
     expect(parseApplyPatch(`apply_patch <<'EOF'\n${PATCH}\nEOF`)).toHaveLength(4);
   });
@@ -113,6 +119,12 @@ describe('Codex hook output', () => {
 
   it('denies when nobody answers in time', async () => {
     const r = await call('Bash', { command: 'sudo ls' }, 6);
+    expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  it('never lets an unreadable patch through without a decision', async () => {
+    const r = await call('apply_patch', { command: 'something that is not a patch' }, 6);
+    expect(r.stdout).not.toBe('');
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
