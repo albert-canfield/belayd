@@ -70,6 +70,8 @@ export interface AnalyzeOptions {
   env?: Record<string, string>;
   /** Reads a script file so `bash x.sh` can be checked line by line. */
   readScript?: (absPath: string) => string | undefined;
+  /** Whether a file exists, so a shell script that is not there yet counts as unseen code. */
+  fileExists?: (absPath: string) => boolean;
 }
 
 const MAX_DEPTH = 6;
@@ -935,6 +937,13 @@ class Analyzer {
       return;
     }
     if (!parse || ctx.depth >= MAX_DEPTH) return;
+    // With parallel tool calls, the agent may be writing this script right now. A shell
+    // script that does not exist yet cannot be read, so it counts as code belayd cannot see.
+    if (parse === true && this.opts.fileExists && !this.opts.fileExists(abs)) {
+      inv.dynamic = true;
+      inv.note = `runs ${file.value}, which does not exist yet, so belayd cannot read it first`;
+      return;
+    }
     const content = this.opts.readScript?.(abs);
     if (content === undefined) return;
     const shellish = /\.(sh|bash|zsh)$/.test(abs) || /^#!.*\b(ba|z|da|k)?sh\b/.test(content);

@@ -69,6 +69,11 @@ describe('scripts are read before they run', () => {
     expect(await verdict('./bin/tool')).toBe('pass');
   });
 
+  it('asks about a shell script that does not exist yet (a parallel tool call may be writing it)', async () => {
+    expect(await verdict('bash not-yet.sh')).toBe('ask');
+    expect(await verdict('source not-yet.sh')).toBe('ask');
+  });
+
   it('asks about a script written earlier in the same command', async () => {
     expect(await verdict(`echo 'rm -rf ~' > x.sh && bash x.sh`)).toBe('ask');
     expect(await verdict(`printf 'ls' | tee run.sh && sh run.sh`)).toBe('ask');

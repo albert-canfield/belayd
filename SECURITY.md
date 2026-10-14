@@ -28,6 +28,7 @@ belayd catches mistakes made by an AI coding agent that you mostly trust, asks y
 - **Programs the agent starts.** belayd sees the command, not what the program then does. `python build.py` is judged as that command. Inline code (`python -c`) cannot be analysed; the strict preset asks about it.
 - **Actions outside the hooks.** belayd sees what the agent's hook system shows it. Files `@`-mentioned in a Claude Code prompt are read without a tool call. Claude Code mods that handle `tool.check` can override hook decisions unless belayd is installed through managed settings. Codex documents that some internal tool paths skip hooks. Remote MCP servers are covered only through the agent's hooks.
 - **An attacker with your account.** Anyone who can run commands as you can edit `belayd.yaml`, the hook settings or the audit database. The audit log's hash chain detects accidental and casual changes, not a determined rewrite.
+- **Scripts that change after the check.** belayd reads `bash x.sh` at the moment the call is checked. A script that does not exist yet is asked about, but if another process rewrites an existing script between the check and the run, belayd does not see the new version.
 - **Commands built at run time.** When belayd cannot know a command or path statically (a variable from the environment, a command substitution as the program name), it asks instead of allowing. It cannot know what the command will turn out to be.
 
 ## How belayd fails

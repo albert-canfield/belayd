@@ -207,6 +207,7 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
         home: ctx.home,
         env: safeEnv(),
         readScript,
+        fileExists: (p) => fs.existsSync(p),
       });
       const subjects = analysis.invocations.map((inv) => fromInvocation(inv, ctx));
       if (analysis.errors.length > 0) {
