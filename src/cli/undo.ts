@@ -201,7 +201,8 @@ function printPlan(
     `${pc.bold(`Undo ${label}`)} ${pc.dim(`of session ${short(session)} in ${path.basename(workspace)}`)}`,
   );
   for (const s of steps.filter((x) => plan.steps.includes(x.step))) {
-    console.log(pc.dim(`  ${String(s.step).padStart(3)}  ${s.tool ?? ''}  ${oneLine(s.label)}`));
+    const label = s.label.split(`${workspace}/`).join('');
+    console.log(pc.dim(`  ${String(s.step).padStart(3)}  ${s.tool ?? ''}  ${oneLine(label)}`));
   }
   console.log('');
   for (const f of plan.files) {
