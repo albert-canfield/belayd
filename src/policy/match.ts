@@ -120,7 +120,21 @@ function anyPath(patterns: string[], paths: string[], env: MatchEnv): boolean {
  * A list with only `!` patterns matches everything outside them, e.g. `!{workspace}/**`.
  */
 function pathMatcher(patterns: string[], env: MatchEnv): (p: string) => boolean {
-  const vars = placeholders(env);
+  // One evaluation can check thousands of paths against the same rules: compile each
+  // rule's patterns once per evaluation, not once per path.
+  let cache = matcherCache.get(env);
+  if (!cache) matcherCache.set(env, (cache = new Map()));
+  let fn = cache.get(patterns);
+  if (!fn) cache.set(patterns, (fn = buildPathMatcher(patterns, env)));
+  return fn;
+}
+
+const matcherCache = new WeakMap<MatchEnv, Map<string[], (p: string) => boolean>>();
+const placeholderCache = new WeakMap<MatchEnv, Record<string, string[]>>();
+
+function buildPathMatcher(patterns: string[], env: MatchEnv): (p: string) => boolean {
+  let vars = placeholderCache.get(env);
+  if (!vars) placeholderCache.set(env, (vars = placeholders(env)));
   const expand = (p: string) => expandPlaceholders(p, vars);
   const pos = patterns.filter((p) => !p.startsWith('!')).flatMap(expand);
   const neg = patterns.filter((p) => p.startsWith('!')).flatMap((p) => expand(p.slice(1)));
