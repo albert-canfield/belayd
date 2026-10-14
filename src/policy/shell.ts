@@ -177,6 +177,45 @@ const VALUE_OPTIONS: Record<string, Set<string>> = {
     '-B',
   ]),
   git: new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env']),
+  arch: new Set(['-e', '-d', '-arch']),
+  xcrun: new Set(['--sdk', '--toolchain', '-sdk', '-toolchain']),
+  'systemd-run': new Set([
+    '-p',
+    '--property',
+    '-u',
+    '--unit',
+    '-E',
+    '--setenv',
+    '-M',
+    '--machine',
+    '-H',
+    '--host',
+    '--description',
+    '--slice',
+    '--working-directory',
+    '--uid',
+    '--gid',
+  ]),
+  nsenter: new Set(['-t', '--target', '-S', '--setuid', '-G', '--setgid', '-r', '-w']),
+  chroot: new Set(['--userspec', '--groups']),
+  script: new Set([
+    '-F',
+    '-t',
+    '-T',
+    '-I',
+    '-O',
+    '-B',
+    '-E',
+    '-m',
+    '--timing',
+    '--log-in',
+    '--log-out',
+    '--log-io',
+    '--log-timing',
+    '--echo',
+    '--logging-format',
+  ]),
+  parallel: new Set(['-j', '--jobs', '-S', '--sshlogin', '--joblog', '-a', '--arg-file', '-d']),
 };
 
 /** Wrappers that simply run the rest of their arguments as a command. */
@@ -195,6 +234,36 @@ const PASSTHROUGH = new Set([
   'caffeinate',
   'unbuffer',
   'chronic',
+  'setsid',
+  'arch',
+  'xcrun',
+  'chroot',
+  'pkexec',
+  'run0',
+  'systemd-run',
+  'unshare',
+  'nsenter',
+  'firejail',
+]);
+const AWKS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+/** tmux commands whose arguments are a shell command, or keys typed into a shell. */
+const TMUX_RUNS = new Set([
+  'new',
+  'new-session',
+  'new-window',
+  'neww',
+  'split-window',
+  'splitw',
+  'run-shell',
+  'run',
+  'respawn-pane',
+  'respawnp',
+  'respawn-window',
+  'respawnw',
+  'send-keys',
+  'send',
+  'pipe-pane',
+  'pipep',
 ]);
 
 const RUNNERS = new Set(['npx', 'pnpx', 'bunx', 'uvx']);
@@ -578,7 +647,7 @@ class Analyzer {
       if (program === 'command' && args.some((w) => w.value === '-v' || w.value === '-V'))
         return program;
       let rest = skipOptions(args, VALUE_OPTIONS[program]);
-      if (program === 'timeout') rest = rest.slice(1); // the duration
+      if (program === 'timeout' || program === 'chroot') rest = rest.slice(1); // duration, root
       if (rest.length > 0) this.invoke(rest, text, scope, nested(program), stdin, []);
       return program;
     }
@@ -640,6 +709,93 @@ class Analyzer {
       case 'find':
         this.find(args, text, scope, nested('find'));
         return program;
+      case 'script': {
+        // util-linux: `script -c 'cmd' file`. BSD and macOS: `script [-q] file cmd args...`.
+        const c = args.findIndex((w) => w.value === '-c' || w.value === '--command');
+        if (c >= 0) {
+          this.codeString(args.slice(c + 1, c + 2), text, scope, nested('script -c'), undefined);
+          return program;
+        }
+        const rest = skipOptions(args, VALUE_OPTIONS.script).slice(1);
+        if (rest.length > 0) this.invoke(rest, text, scope, nested('script'), stdin, []);
+        return program;
+      }
+      case 'tmux': {
+        const c = args.findIndex((w) => w.value === '-c');
+        if (c >= 0) {
+          this.codeString(args.slice(c + 1, c + 2), text, scope, nested('tmux -c'), undefined);
+          return program;
+        }
+        // `tmux new -d 'rm -rf ~'`, `tmux send-keys 'rm -rf ~' Enter`, also after `;`.
+        for (let i = 0; i < args.length; i++) {
+          if (!TMUX_RUNS.has(args[i]!.value)) continue;
+          const words: EvalWord[] = [];
+          for (let j = i + 1; j < args.length && args[j]!.value !== ';'; j++) {
+            const v = args[j]!.value;
+            if (/^-[A-Za-z]*[censtxyFlLTwWbS]$/.test(v))
+              j++; // option with a value
+            else if (!v.startsWith('-') && !/^(Enter|C-m|KPEnter)$/.test(v)) words.push(args[j]!);
+          }
+          if (words.length > 0)
+            this.codeString(words, text, scope, nested(`tmux ${args[i]!.value}`), undefined);
+        }
+        return program;
+      }
+      case 'screen': {
+        // `screen -dm cmd args...` runs a command; `screen -X stuff 'text'` types into one.
+        let i = 0;
+        for (; i < args.length; i++) {
+          const v = args[i]!.value;
+          if (!v.startsWith('-') || v === '-') break;
+          if (v === '-X') {
+            const typed = args[i + 2];
+            // screen turns `\n` and `\r` in the typed text into Enter.
+            if (args[i + 1]?.value === 'stuff' && typed)
+              this.codeString(
+                [{ ...typed, value: typed.value.replace(/\\[nr]/g, '\n') }],
+                text,
+                scope,
+                nested('screen -X'),
+                undefined,
+              );
+            return program;
+          }
+          const letters = v.slice(1);
+          const at = letters.search(/[SceshptT]/);
+          if (at >= 0 && at === letters.length - 1) i++; // `-S name`, `-dmS name`
+        }
+        const rest = args.slice(i);
+        if (rest.length > 0) this.invoke(rest, text, scope, nested('screen'), stdin, []);
+        return program;
+      }
+      case 'at':
+      case 'batch': {
+        // The commands come from `-f file` or from stdin, and run later in a shell.
+        const f = args.findIndex((w) => w.value === '-f');
+        if (f >= 0 && args[f + 1]) this.runScript(inv, args[f + 1]!, scope, ctx, false, true);
+        else if (!args.some((w) => /^-[lrdcq]$/.test(w.value)))
+          this.stdinCode(inv, stdin, scope, nested(program), true);
+        return program;
+      }
+      case 'parallel': {
+        // `parallel rm -rf ::: ~` runs the command once per item after `:::`.
+        const rest = skipOptions(args, VALUE_OPTIONS.parallel);
+        const sep = rest.findIndex((w) => w.value === ':::' || w.value === '::::');
+        const command = sep >= 0 ? rest.slice(0, sep) : rest;
+        const items = sep >= 0 ? rest.slice(sep + 1) : [unknownWord('<items from stdin>')];
+        if (command.length === 0) return program;
+        const code = command.map((w) => w.value).join(' ');
+        const filled = code.includes('{}')
+          ? [
+              {
+                ...literal(code.replaceAll('{}', items.map((w) => w.value).join(' '))),
+                resolved: command.every((w) => w.resolved) && items.every((w) => w.resolved),
+              },
+            ]
+          : [...command, ...items].map((w) => ({ ...w, value: quote(w.value) }));
+        this.codeString(filled, text, scope, nested('parallel'), undefined);
+        return program;
+      }
       case 'watch': {
         const rest = skipOptions(args, VALUE_OPTIONS.watch);
         if (rest.length > 0) this.codeString(rest, text, scope, nested('watch'), undefined);
@@ -729,6 +885,11 @@ class Analyzer {
 
     if (SHELLS.has(program)) {
       this.shell(inv, args, text, scope, nested(`${program} -c`), stdin);
+      return program;
+    }
+
+    if (AWKS.has(program)) {
+      this.awk(inv, args, text, scope, nested(`${program} program`));
       return program;
     }
 
@@ -949,6 +1110,42 @@ class Analyzer {
       this.invoke([literal('cat'), literal(target)], text, scope, ctx, undefined, []);
     }
     return true;
+  }
+
+  /**
+   * awk programs run shell commands through system(), `"cmd" | getline` and
+   * `print | "cmd"`. Those are read like any other command.
+   */
+  private awk(inv: Invocation, args: EvalWord[], text: string, scope: Scope, ctx: Ctx): void {
+    let program: EvalWord | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const v = args[i]!.value;
+      if (v === '-f' || v === '--file') return; // the program is in a file
+      if (/^-[vFW]$/.test(v) || v === '--assign' || v === '--field-separator') i++;
+      else if (!v.startsWith('-')) {
+        program = args[i];
+        break;
+      }
+    }
+    if (!program) return;
+    if (!program.resolved) {
+      inv.dynamic = true;
+      inv.note = 'runs an awk program that is only known at run time';
+      return;
+    }
+    const code = program.value;
+    if (code.length > MAX_INLINE_CODE) {
+      inv.dynamic = true;
+      inv.note = 'runs an awk program too large for belayd to check';
+      return;
+    }
+    const commands = [
+      ...callArguments(code, ['system'], false),
+      ...[...code.matchAll(/"([^"\n]*)"[ \t]*\|[ \t]*getline/g)].map((m) => m[1]!),
+      ...[...code.matchAll(/\|&?[ \t]*"([^"\n]*)"/g)].map((m) => m[1]!),
+    ];
+    for (const c of commands)
+      this.source(unquote(c), cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
   }
 
   /**
@@ -1457,6 +1654,8 @@ function unknownWord(text: string): EvalWord {
 
 const SHELL_CALLS = [
   'system',
+  'os.execute',
+  'io.popen',
   'popen',
   'execSync',
   'exec',

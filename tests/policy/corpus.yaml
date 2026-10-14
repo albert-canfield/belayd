@@ -391,3 +391,28 @@
 - { cmd: 'mkfifo belayd.yaml', balanced: ask }
 - { cmd: 'mknod ~/.claude/settings.json p', balanced: ask, strict: deny }
 - { cmd: 'mkfifo /tmp/pipe', balanced: pass }
+
+# --- More wrappers ------------------------------------------------------------
+- { cmd: 'script -q /dev/null rm -rf ~', balanced: deny }
+- { cmd: "script -c 'rm -rf ~' /dev/null", balanced: deny }
+- { cmd: 'setsid rm -rf ~', balanced: deny }
+- { cmd: 'arch -arm64 rm -rf ~', balanced: deny }
+- { cmd: 'xcrun rm -rf ~', balanced: deny }
+- { cmd: 'chroot / rm -rf ~', balanced: deny }
+- { cmd: "tmux new -d 'rm -rf ~'", balanced: deny }
+- { cmd: "tmux new-session -d -s work 'rm -rf ~'", balanced: deny }
+- { cmd: "tmux send-keys -t 0 'rm -rf ~' Enter", balanced: deny }
+- { cmd: 'screen -dm rm -rf ~', balanced: deny }
+- { cmd: 'screen -dmS job rm -rf ~', balanced: deny }
+- { cmd: 'screen -S job -X stuff ''rm -rf ~\n''', balanced: deny }
+- { cmd: 'awk ''BEGIN{system("rm -rf ~")}''', balanced: deny }
+- { cmd: 'awk ''BEGIN { "rm -rf ~" | getline x }''', balanced: deny }
+- { cmd: 'lua -e ''os.execute("rm -rf ~")''', balanced: deny }
+- { cmd: "at now <<< 'rm -rf ~'", balanced: deny }
+- { cmd: 'parallel rm -rf ::: ~', balanced: deny }
+- { cmd: "parallel 'rm -rf {}' ::: ~", balanced: deny }
+- { cmd: 'env -u CLAUDE_CODE_CHILD_SESSION script -q /dev/null belayd trust', balanced: deny }
+- { cmd: "awk '{print $1}' file.txt", balanced: pass }
+- { cmd: 'tmux new -s dev', balanced: pass }
+- { cmd: 'screen -r', balanced: pass }
+- { cmd: 'parallel echo ::: a b c', balanced: pass }

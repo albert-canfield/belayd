@@ -14,7 +14,7 @@ belayd catches mistakes made by an AI coding agent that you mostly trust, asks y
 
 **In scope.** belayd aims to stop, ask about, or record:
 
-- destructive commands outside the project (`rm -rf ~`, disk formatting, recursive permission changes on system folders), including when they are hidden behind quoting, variables, `bash -c`, `eval`, substitutions, heredocs, pipes into interpreters, base64, aliases, functions, `find -exec`, `xargs` and wrappers like `sudo`, `env`, `nice` or `timeout`
+- destructive commands outside the project (`rm -rf ~`, disk formatting, recursive permission changes on system folders), including when they are hidden behind quoting, variables, `bash -c`, `eval`, substitutions, heredocs, pipes into interpreters, base64, aliases, functions, `find -exec`, `xargs`, `parallel`, `awk`'s `system()` and wrappers like `sudo`, `env`, `timeout`, `setsid`, `script`, `tmux`, `screen` or `at`
 - code downloaded and run without anyone reading it (`curl | sh`, `bash <(curl ...)`, download then execute)
 - reading files that hold secrets (`.env`, private keys, cloud credentials), including through symlinks inside the project
 - secrets leaving the machine in commands, fetches and MCP arguments
