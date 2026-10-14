@@ -106,4 +106,39 @@ describe('runners and hooks the agent changed in this session', () => {
   it('still asks in yolo-with-undo, because undo cannot take back what the code did', async () => {
     expect(await verdict('npm test', 'yolo-with-undo', ['package.json'])).toBe('ask');
   });
+
+  it('reads scripts given on stdin', async () => {
+    file('x.sh', 'cat .env\n');
+    expect(await verdict('bash < x.sh')).toBe('deny');
+    expect(await verdict('sh -s < x.sh')).toBe('deny');
+  });
+
+  it('asks about scripts it cannot read in full', async () => {
+    file('big.sh', `${'#'.repeat(300 * 1024)}\nrm -rf ~\n`);
+    expect(await verdict('bash big.sh')).toBe('ask');
+    expect(await verdict('./missing.sh')).toBe('ask');
+    fs.mkdirSync(path.join(ws, 'dir.sh'));
+    expect(await verdict('bash dir.sh')).toBe('ask');
+  });
+
+  it('asks when scripts are nested deeper than it follows', async () => {
+    for (let i = 1; i < 8; i++) file(`s${i}.sh`, `bash s${i + 1}.sh\n`);
+    file('s8.sh', 'rm -rf ~\n');
+    expect(await verdict('bash s1.sh')).toBe('ask');
+  });
+
+  it('reads a script that runs itself only once', async () => {
+    file('loop.sh', 'echo again\nbash loop.sh\n');
+    expect(await verdict('bash loop.sh')).toBe('pass');
+  });
+
+  it('stays fast when scripts fan out', async () => {
+    const names = 'abcdef';
+    for (let i = 0; i < names.length; i++)
+      file(`${names[i]}.sh`, `bash ${names[i + 1] ?? 'z'}.sh\n`.repeat(60));
+    file('z.sh', 'rm -rf ~\n');
+    const started = Date.now();
+    expect(await verdict('bash a.sh')).toBe('ask');
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
 });

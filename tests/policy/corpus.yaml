@@ -386,3 +386,8 @@
 - { cmd: 'rm -rf "$(echo x ~)"', balanced: pass, note: quoted, so one odd file name }
 - { cmd: 'D=build; rm -rf $D', balanced: pass }
 - { cmd: 'X="a b"; echo $X', balanced: pass, strict: allow }
+
+# --- Special files ------------------------------------------------------------
+- { cmd: 'mkfifo belayd.yaml', balanced: ask }
+- { cmd: 'mknod ~/.claude/settings.json p', balanced: ask, strict: deny }
+- { cmd: 'mkfifo /tmp/pipe', balanced: pass }

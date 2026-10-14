@@ -69,13 +69,22 @@ export interface AnalyzeOptions {
   /** Environment variables the analysis may resolve. Keep this to non-secret values. */
   env?: Record<string, string>;
   /** Reads a script file so `bash x.sh` can be checked line by line. */
-  readScript?: (absPath: string) => string | undefined;
+  /**
+   * Reads a script about to run, or undefined when it cannot be read. `truncated` means
+   * only the start of it was read, because it is too large to check.
+   */
+  readScript?: (absPath: string) => { text: string; truncated: boolean } | undefined;
   /** Whether a file exists, so a shell script that is not there yet counts as unseen code. */
   fileExists?: (absPath: string) => boolean;
 }
 
 const MAX_DEPTH = 6;
 const MAX_ALTERNATIVES = 64;
+/** Limits that keep the analysis fast whatever the input; past them, belayd asks. */
+const MAX_SOURCE_CHARS = 1_000_000;
+const MAX_INVOCATIONS = 5_000;
+const MAX_INLINE_CODE = 200_000;
+const MAX_LITERAL = 10_000;
 /** Marks where an unquoted expansion splits a word. The shell drops NUL bytes, so it is free. */
 const FIELD_BREAK = '\u0000';
 
@@ -218,6 +227,8 @@ interface Ctx {
   depth: number;
   via: string[];
   remote: boolean;
+  /** Scripts being read further up, so a script that runs itself is read once. */
+  scripts?: readonly string[];
 }
 
 interface StdinInfo {
@@ -257,12 +268,24 @@ class Analyzer {
 
   constructor(private readonly opts: AnalyzeOptions) {}
 
+  /** Characters left to parse. Scripts that run each other many times over stop here. */
+  private budget = MAX_SOURCE_CHARS;
+  private readonly parsed = new Map<string, ParsedScript>();
+  private exhausted = false;
+
   source(src: string, scope: Scope, ctx: Ctx, stdin: StdinInfo | undefined): void {
     if (ctx.depth > MAX_DEPTH) {
       this.pushDynamic(src, scope, ctx, 'nested too deeply to analyse');
       return;
     }
-    const ast = parse(src);
+    this.budget -= src.length + 16;
+    if (this.budget < 0) this.exhaust(this.base(src.slice(0, 200), scope, ctx));
+    if (this.exhausted) return;
+    let ast = this.parsed.get(src);
+    if (!ast) {
+      ast = parse(src);
+      if (src.length > 512) this.parsed.set(src, ast);
+    }
     for (const err of ast.errors ?? []) this.errors.push(err.message);
     this.script(ast, ast.source ?? src, scope, ctx, stdin);
   }
@@ -284,7 +307,10 @@ class Analyzer {
     ctx: Ctx,
     stdin?: StdinInfo,
   ): void {
-    for (const st of list) this.node(st.command, src, scope, ctx, stdin);
+    for (const st of list) {
+      if (this.exhausted) return;
+      this.node(st.command, src, scope, ctx, stdin);
+    }
   }
 
   private compoundList(list: CompoundList, src: string, scope: Scope, ctx: Ctx): void {
@@ -712,7 +738,10 @@ class Analyzer {
       if (lower.some((a) => interp.inline.includes(a))) {
         inv.inlineCode = true;
         for (const w of args) inv.codeFrom.push(...w.subPrograms);
-        this.inlineCode(args, text, scope, nested(`${program} code`));
+        if (!this.inlineCode(program, args, text, scope, nested(`${program} code`))) {
+          inv.dynamic = true;
+          inv.note = 'runs inline code too large for belayd to check';
+        }
       } else if (!lower.some((a) => interp.module?.includes(a))) {
         const script = args.find((w) => !w.value.startsWith('-'));
         if (script) {
@@ -755,6 +784,15 @@ class Analyzer {
     if (first && !stdinMode) {
       inv.codeFrom.push(...this.codeSources(first, scope));
       this.runScript(inv, first, scope, ctx, false, true);
+      return;
+    }
+    // `bash < x.sh` and `sh -s < x.sh` read the script from a file.
+    const input = inv.redirects.findLast((r) => r.op === '<');
+    if (input) {
+      if (!input.resolved) {
+        inv.dynamic = true;
+        inv.note = 'runs a script whose name is only known at run time';
+      } else this.runScript(inv, literal(input.target), scope, ctx, false, true);
       return;
     }
     this.stdinCode(inv, stdin, scope, ctx, true);
@@ -882,42 +920,35 @@ class Analyzer {
    * Inline code (`python -c`, `node -e`, `perl -e`, `osascript -e`) cannot be analysed
    * in general, but the common dangerous shapes can: shell commands passed to
    * system()/exec()/subprocess, and string paths given to delete or open calls.
+   * Returns false when the code is too large to scan.
    */
-  private inlineCode(args: EvalWord[], text: string, scope: Scope, ctx: Ctx): void {
+  private inlineCode(
+    interpreter: string,
+    args: EvalWord[],
+    text: string,
+    scope: Scope,
+    ctx: Ctx,
+  ): boolean {
     const code = args
       .filter((w) => w.resolved)
       .map((w) => w.value)
       .join('\n');
-    // A single, double or back-quoted string literal; group 2 is its body.
-    const lit = '([\'"`])((?:\\\\.|(?!\\1).)*)\\1';
-    const shell = new RegExp(
-      '(?:\\bsystem|\\bpopen|\\bexecSync|\\bexec|\\bspawnSync|\\bcheck_output|\\bcheck_call|' +
-        '\\bsubprocess\\.(?:run|call|Popen)|\\bshell_exec|\\bpassthru|do shell script|\\bqx)\\s*\\(?\\s*' +
-        lit,
-      'g',
-    );
-    for (const m of code.matchAll(shell)) {
-      this.source(unquote(m[2]!), cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
-    }
-    const remove = new RegExp(
-      '(?:\\brmtree|\\brmSync|\\brmdirSync|\\bunlinkSync|\\bos\\.remove|\\bos\\.unlink|\\bos\\.rmdir|' +
-        '\\bpromises\\.rm|\\brimraf(?:\\.sync)?|\\bunlink|\\brm_rf|\\bFile\\.delete)\\s*\\(?\\s*' +
-        lit,
-      'g',
-    );
-    for (const m of code.matchAll(remove)) {
-      const target = expandUser(unquote(m[2]!), this.opts.home);
+    if (code.length > MAX_INLINE_CODE) return false;
+    // Python's exec() runs Python, not a shell.
+    const shellCalls = interpreter.startsWith('python')
+      ? SHELL_CALLS.filter((c) => c !== 'exec')
+      : SHELL_CALLS;
+    for (const body of callArguments(code, shellCalls, false))
+      this.source(unquote(body), cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
+    for (const body of callArguments(code, REMOVE_CALLS, false)) {
+      const target = expandUser(unquote(body), this.opts.home);
       this.invoke([literal('rm'), literal('-r'), literal(target)], text, scope, ctx, undefined, []);
     }
-    const read = new RegExp(
-      '(?:\\bopen|readFileSync|\\breadFile|\\bFile\\.read|\\bIO\\.read|file_get_contents|\\bPath)\\s*\\(\\s*' +
-        lit,
-      'g',
-    );
-    for (const m of code.matchAll(read)) {
-      const target = expandUser(unquote(m[2]!), this.opts.home);
+    for (const body of callArguments(code, READ_CALLS, true)) {
+      const target = expandUser(unquote(body), this.opts.home);
       this.invoke([literal('cat'), literal(target)], text, scope, ctx, undefined, []);
     }
+    return true;
   }
 
   /**
@@ -942,22 +973,33 @@ class Analyzer {
       inv.note = `runs ${file.value}, which this same command writes first, so belayd cannot read it in advance`;
       return;
     }
-    if (!parse || ctx.depth >= MAX_DEPTH) return;
-    // With parallel tool calls, the agent may be writing this script right now. A shell
-    // script that does not exist yet cannot be read, so it counts as code belayd cannot see.
-    if (parse === true && this.opts.fileExists && !this.opts.fileExists(abs)) {
+    if (!parse || !this.opts.readScript || this.exhausted) return;
+    const unseen = (why: string) => {
       inv.dynamic = true;
-      inv.note = `runs ${file.value}, which does not exist yet, so belayd cannot read it first`;
-      return;
-    }
-    const content = this.opts.readScript?.(abs);
-    if (content === undefined) return;
-    const shellish = /\.(sh|bash|zsh)$/.test(abs) || /^#!.*\b(ba|z|da|k)?sh\b/.test(content);
+      inv.note = `runs ${file.value}, which ${why}`;
+    };
+    // With parallel tool calls, the agent may be writing this script right now. A script
+    // that does not exist yet cannot be read, so it counts as code belayd cannot see.
+    if (this.opts.fileExists && !this.opts.fileExists(abs))
+      return unseen('does not exist yet, so belayd cannot read it first');
+    const script = this.opts.readScript(abs);
+    if (!script) return unseen('belayd cannot read');
+    const shellish =
+      /\.(sh|bash|zsh)$/.test(abs) || /^#!.*\b(ba|z|da|k)?sh\b/.test(script.text.slice(0, 256));
     if (parse === 'shebang' && !shellish) return;
+    if (script.truncated) return unseen('is too large for belayd to check');
+    if (ctx.scripts?.includes(abs)) return; // it runs itself: already being checked
+    if (ctx.depth >= MAX_DEPTH) return unseen('runs other scripts nested too deeply to check');
+    const content = script.text;
     this.source(
       content,
       sameScope ? scope : cloneScope(scope),
-      { ...ctx, depth: ctx.depth + 1, via: [...ctx.via, path.posix.basename(abs)] },
+      {
+        ...ctx,
+        depth: ctx.depth + 1,
+        via: [...ctx.via, path.posix.basename(abs)],
+        scripts: [...(ctx.scripts ?? []), abs],
+      },
       undefined,
     );
   }
@@ -1301,7 +1343,26 @@ class Analyzer {
   }
 
   private push(inv: Invocation): void {
+    if (this.exhausted) return;
     this.out.push(inv);
+    if (this.out.length > MAX_INVOCATIONS) this.exhaust(inv);
+  }
+
+  /**
+   * Stops the analysis once it has seen too much, leaving one entry that belayd cannot
+   * check, so the result is a question rather than a hang.
+   */
+  private exhaust(at: Invocation): void {
+    if (this.exhausted) return;
+    this.out.push({
+      ...at,
+      argv: [],
+      program: '',
+      dynamic: true,
+      unresolved: true,
+      note: 'too much code for belayd to check',
+    });
+    this.exhausted = true;
   }
 }
 
@@ -1392,4 +1453,90 @@ function literal(value: string): EvalWord {
 
 function unknownWord(text: string): EvalWord {
   return { text, value: text, values: [text], resolved: false, subPrograms: [] };
+}
+
+const SHELL_CALLS = [
+  'system',
+  'popen',
+  'execSync',
+  'exec',
+  'spawnSync',
+  'check_output',
+  'check_call',
+  'subprocess.run',
+  'subprocess.call',
+  'subprocess.Popen',
+  'shell_exec',
+  'passthru',
+  'do shell script',
+  'qx',
+];
+const REMOVE_CALLS = [
+  'rmtree',
+  'rmSync',
+  'rmdirSync',
+  'unlinkSync',
+  'os.remove',
+  'os.unlink',
+  'os.rmdir',
+  'promises.rm',
+  'rimraf',
+  'rimraf.sync',
+  'unlink',
+  'rm_rf',
+  'File.delete',
+];
+const READ_CALLS = [
+  'open',
+  'readFileSync',
+  'readFile',
+  'File.read',
+  'IO.read',
+  'file_get_contents',
+  'Path',
+];
+
+const callPatterns = new Map<readonly string[], RegExp>();
+
+/**
+ * The string literals passed to the named calls: `system("rm -rf ~")` gives `rm -rf ~`.
+ * A plain scan rather than one big regex, so hostile input cannot make it backtrack:
+ * each call name is found by a regex with no nested repetition, and its argument is
+ * read character by character.
+ */
+function callArguments(code: string, names: readonly string[], needParen: boolean): string[] {
+  let re = callPatterns.get(names);
+  if (!re) {
+    const alternatives = names.map((n) => n.replace(/[.]/g, '\\.'));
+    re = new RegExp(`(?<![A-Za-z0-9_$])(?:${alternatives.join('|')})(?![A-Za-z0-9_$])`, 'g');
+    callPatterns.set(names, re);
+  }
+  const found: string[] = [];
+  re.lastIndex = 0;
+  let scanned = 0;
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    let i = m.index + m[0].length;
+    while (code[i] === ' ' || code[i] === '\t') i++;
+    if (code[i] === '(') i++;
+    else if (needParen) continue;
+    while (code[i] === ' ' || code[i] === '\t') i++;
+    const quote = code[i];
+    if (quote !== '"' && quote !== "'" && quote !== '`') continue;
+    const start = i + 1;
+    let end = -1;
+    for (let j = start; j < code.length && j - start < MAX_LITERAL; j++) {
+      const c = code[j];
+      if (c === '\\') j++;
+      else if (c === quote) {
+        end = j;
+        break;
+      } else if (c === '\n' && quote !== '`') break;
+    }
+    scanned += (end < 0 ? Math.min(MAX_LITERAL, code.length - start) : end - start) + 1;
+    if (scanned > MAX_INLINE_CODE * 4) break;
+    if (end < 0) continue;
+    found.push(code.slice(start, end));
+    re.lastIndex = end + 1;
+  }
+  return found;
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { version } from '../version.js';
 import { contentHash, trustedHash } from './trust.js';
+import { readRegularFile } from '../util/files.js';
 import { ensurePrivateDir } from '../util/paths.js';
 import type { Rule } from './schema.js';
 
@@ -140,28 +141,15 @@ export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
  * read would then hang every hook call.
  */
 export function readPolicyText(file: string): string {
-  let fd: number;
+  let read: { text: string; size: number };
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+    read = readRegularFile(file, MAX_POLICY_BYTES);
   } catch (err) {
     throw new PolicyError(`cannot read the policy file (${(err as Error).message})`, file);
   }
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) throw new PolicyError('the policy file is not a regular file', file);
-    if (stat.size > MAX_POLICY_BYTES)
-      throw new PolicyError('the policy file is larger than 1 MB', file);
-    const buf = Buffer.alloc(stat.size);
-    let got = 0;
-    while (got < buf.length) {
-      const n = fs.readSync(fd, buf, got, buf.length - got, got);
-      if (n === 0) break;
-      got += n;
-    }
-    return buf.subarray(0, got).toString('utf8');
-  } finally {
-    fs.closeSync(fd);
-  }
+  if (read.size > MAX_POLICY_BYTES)
+    throw new PolicyError('the policy file is larger than 1 MB', file);
+  return read.text;
 }
 
 function cacheKey(parts: string[]): string | undefined {

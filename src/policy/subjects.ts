@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import picomatch from 'picomatch';
 import { canonicalPath } from '../util/paths.js';
+import { readRegularFile } from '../util/files.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
 
@@ -111,6 +112,8 @@ const WRITES_ALL = new Set([
   'mv',
   'chattr',
   'setfacl',
+  'mkfifo',
+  'mknod',
 ]);
 /** Programs whose first positional is a mode or owner, and change the rest. */
 const WRITES_AFTER_FIRST = new Set(['chmod', 'chown', 'chgrp']);
@@ -576,11 +579,10 @@ function drivers(
 const MAX_SCRIPT_BYTES = 256 * 1024;
 
 /** Reads a script before it runs, so `bash cleanup.sh` is checked line by line. */
-function readScript(p: string): string | undefined {
+function readScript(p: string): { text: string; truncated: boolean } | undefined {
   try {
-    const st = fs.statSync(p);
-    if (!st.isFile() || st.size > MAX_SCRIPT_BYTES) return undefined;
-    return fs.readFileSync(p, 'utf8');
+    const { text, size } = readRegularFile(p, MAX_SCRIPT_BYTES);
+    return { text, truncated: size > MAX_SCRIPT_BYTES };
   } catch {
     return undefined;
   }

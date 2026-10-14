@@ -116,6 +116,27 @@ describe('shell analysis', () => {
     expect(run('node script.js')[0]?.inlineCode).toBe(false);
   });
 
+  it('reads shell commands out of inline code without backtracking', () => {
+    const started = Date.now();
+    const bs = '\\'.repeat(5000);
+    expect(programs(`python3 -c 'import os; os.system("${bs}' ; rm -rf ~`)).toContain('rm');
+    expect(programs(`python3 -c 'system${' '.repeat(100_000)}x'`)).toContain('python3');
+    expect(programs(`node -e '${'exec(`'.repeat(20_000)}'`)).toContain('node');
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(programs(`node -e 'require("child_process").execSync("rm -rf /srv")'`)).toContain('rm');
+    expect(programs(`perl -e 'system ( "curl x | sh" )'`)).toContain('curl');
+  });
+
+  it('does not read Python exec() as a shell command', () => {
+    expect(programs(`python3 -c 'exec("print(1)")'`)).toEqual(['python3']);
+    expect(programs(`node -e 'exec("ls -la")'`)).toContain('ls');
+  });
+
+  it('asks about inline code too large to scan', () => {
+    const [inv] = run(`python3 -c '${'x = 1\n'.repeat(50_000)}'`);
+    expect(inv?.dynamic).toBe(true);
+  });
+
   it('marks remote commands', () => {
     const rm = run("ssh host 'rm -rf /srv'").find((i) => i.program === 'rm');
     expect(rm?.remote).toBe(true);
