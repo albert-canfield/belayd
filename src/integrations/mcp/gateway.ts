@@ -152,7 +152,7 @@ export function runGateway(opts: GatewayOptions): Promise<number> {
           tool: ctx.toolName,
           toolUseId: ctx.toolUseId,
           kind: 'mcp',
-          label: actionLabel(action),
+          label: actionLabel(action, ctx.workspace),
           input: summarizeInput(action.args),
           decision,
           durationMs: Date.now() - started,

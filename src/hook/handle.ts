@@ -122,7 +122,7 @@ export async function handleToolHook(
       tool: input.tool,
       toolUseId: input.toolUseId,
       kind: action.kind,
-      label: actionLabel(action),
+      label: actionLabel(action, workspace),
       input: summarizeInput(input.input ?? {}),
       decision: told,
       durationMs: Date.now() - started,

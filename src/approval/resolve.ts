@@ -56,7 +56,7 @@ export async function resolveAsk(opts: ResolveOptions): Promise<Resolution> {
       ...(opts.ctx.toolName ? { toolName: opts.ctx.toolName } : {}),
       workspace: opts.ctx.workspace,
       cwd: opts.ctx.cwd,
-      label: actionLabel(opts.action),
+      label: actionLabel(opts.action, opts.ctx.workspace),
       kind: opts.action.kind,
       reason: decision.reason,
       ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
