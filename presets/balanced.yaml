@@ -247,7 +247,19 @@ rules:
         - git checkout
         - git restore
         - git stash
-      args: { any: [--hard, -f, --force, -fd, -fdx, -fx, '.', drop, clear, --worktree] }
+      # --staged only unstages, unless --worktree comes with it (the next rule).
+      args:
+        {
+          any: [--hard, -f, --force, -fd, -fdx, -fx, '.', drop, clear, --worktree, -W],
+          none: [--staged, -S],
+        }
+    decision: ask
+    reason: Throws away uncommitted work.
+
+  - id: ask-discard-worktree
+    match:
+      command: git restore
+      args: { any: [--worktree, -W] }
     decision: ask
     reason: Throws away uncommitted work.
 

@@ -19,6 +19,12 @@ rules:
     decision: allow
     reason: Undo can restore discarded work.
 
+  - id: ask-discard-worktree
+    match:
+      command: git restore
+    decision: allow
+    reason: Undo can restore discarded work.
+
   - id: ask-delete-unknown-paths
     match:
       command: [rm, rmdir, shred, srm, unlink, rimraf, mv]

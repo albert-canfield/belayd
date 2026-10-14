@@ -430,3 +430,10 @@
 - { cmd: 'ls -la ~/.ssh', balanced: pass, strict: allow }
 - { cmd: 'stat .env', balanced: pass, strict: allow }
 - { cmd: 'ls .env > /dev/null && cat .env', balanced: deny, yolo: ask }
+
+# --- Unstaging is not discarding ----------------------------------------------
+- { cmd: 'git restore --staged .', balanced: pass }
+- { cmd: 'git restore -S src/app.ts', balanced: pass }
+- { cmd: 'git restore --staged --worktree .', balanced: ask, yolo: allow }
+- { cmd: 'git restore -SW .', balanced: ask, yolo: allow }
+- { cmd: 'git stash --staged', balanced: pass }
