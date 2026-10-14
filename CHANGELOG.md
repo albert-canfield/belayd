@@ -7,7 +7,8 @@ The first release. belayd sits between AI coding agents and your machine: one po
 ### Policy
 
 - Shell commands are parsed, not pattern-matched. belayd follows quoting, variables and word splitting, `cd`, aliases, functions, `bash -c`, `eval`, command and process substitution, heredocs and here-strings, pipes into interpreters, base64-encoded scripts, downloads that are executed later, `find -exec` and `-delete`, `xargs`, `parallel`, `awk`'s `system()`, and wrappers such as `sudo`, `env`, `timeout`, `setsid`, `script`, `tmux`, `screen` and `at`. Anything it cannot see into gets a question.
-- Three presets: `balanced` (default), `strict` and `yolo-with-undo`. Your `belayd.yaml` rules win over the preset; `final` preset rules can only be switched off explicitly.
+- Three presets: `balanced` (default), `strict` and `yolo-with-undo`. Your `belayd.yaml` rules win over the preset; `final` preset rules can only be switched off explicitly. Even `yolo-with-undo` asks before deleting a path belayd cannot know, because it may lie outside the project, where undo cannot reach.
+- Branches are followed: after `if`, `case`, `&&`, `||` and loops, belayd checks every folder or value a command could be working with.
 - Rules match programs and subcommands, arguments, paths read or written (judged where they really point, through symlinks), network domains, code piped from the internet, and secrets in outgoing data.
 - Shell scripts are read before they run (`bash x.sh`, `./x.sh`, `source x.sh`, `bash < x.sh`) and checked line by line, with `$1` and `"$@"` standing for the arguments they were given.
 - belayd remembers which files the agent changed in a session, including through code it cannot read, and asks before running scripts or hooks from them (`npm test` or `npm install` after editing `package.json`, `make` after editing the `Makefile`, `git commit` after adding a Git, husky or pre-commit hook).
