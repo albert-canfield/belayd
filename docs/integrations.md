@@ -200,6 +200,14 @@ Sources: [Hooks](https://geminicli.com/docs/hooks/), [Hooks reference](https://g
 
 Strategy: `BeforeTool` and `AfterTool` hooks running `belayd hook gemini`, out-of-band approval for ask, optional compile of ask rules into `~/.gemini/policies/belayd.toml`. Effort: 3 to 5 days plus 2 days E2E.
 
+## Ollama
+
+Checked 14 Oct 2026. Sources: [Ollama integrations](https://docs.ollama.com/integrations), [Claude Code with Ollama](https://docs.ollama.com/integrations/claude-code), [Copilot CLI with Ollama](https://docs.ollama.com/integrations/copilot-cli), coverage of the v0.32 agent mode.
+
+- `ollama launch <agent>` starts Claude Code, Codex, Copilot CLI, OpenCode and others against a local or cloud model, by setting the agent's API environment variables (for Claude Code: `ANTHROPIC_BASE_URL=http://localhost:11434`, `ANTHROPIC_AUTH_TOKEN=ollama`; for Copilot CLI: `COPILOT_PROVIDER_BASE_URL`, `COPILOT_MODEL`). Nothing in the docs moves the agent's config folder, so the agent loads its usual settings and belayd's hooks with them. belayd therefore covers Ollama-launched Claude Code, Codex and Copilot CLI through their own adapters. Not yet confirmed in a live session.
+- Since v0.32 (July 2026), the bare `ollama` command is an interactive agent with skills for files, git, web fetch and the terminal. It runs commands and edits files with the user's permissions. Its docs describe no hooks, approval prompts, policy file or extension point that an outside program could use, so belayd cannot check its tool calls yet. `belayd init` and `belayd doctor` say so when Ollama is installed.
+- Possible later: if the agent runs commands through `$SHELL`, a belayd shell shim could check them; that would not cover its file edits. Worth looking at once Ollama documents how the agent executes tools.
+
 ## OpenCode
 
 Sources: [Plugins](https://opencode.ai/docs/plugins/), [Permissions](https://opencode.ai/docs/permissions/), source at [v1.19.0](https://github.com/anomalyco/opencode/tree/v1.19.0).

@@ -154,7 +154,8 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
 | Copilot CLI | ✓ (not yet tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
-| Gemini CLI, Antigravity CLI, OpenCode, Ollama | Planned | | | | |
+| Ollama | Through the agents it starts | | | | `ollama launch claude`, `codex` or `copilot` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
+| Gemini CLI, Antigravity CLI, OpenCode | Planned | | | | |
 <!-- agents:end -->
 
 Codex can't show its own prompt from a hook (it treats a hook's "ask" as an error and runs the command), so belayd never sends it one: it holds the call and asks you itself.

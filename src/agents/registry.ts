@@ -21,11 +21,17 @@ export interface AgentEntry {
    * `hooks`: belayd installs its own hooks into this agent.
    * `host`: the agent runs another agent's hook files (Cursor runs Claude Code's), so it
    * is covered through that agent's hooks.
+   * `launcher`: starts other agents (`ollama launch claude`), which are covered through
+   * their own hooks; anything it does by itself is not.
    * `planned`: recognised, not supported yet.
    */
-  support: 'hooks' | 'host' | 'planned';
+  support: 'hooks' | 'host' | 'launcher' | 'planned';
   /** For a host: the agent whose hook files it runs. */
   runsHooksOf?: AgentId;
+  /** For a launcher: the agents it starts that belayd covers. */
+  launches?: AgentId[];
+  /** What is not covered, said by init and doctor. */
+  gap?: string;
   /** A cheap guess at whether this agent is installed: its config folder exists. */
   detect(env: NodeJS.ProcessEnv): boolean;
   dialect?(): Promise<Dialect>;
@@ -82,7 +88,9 @@ export const AGENTS: readonly AgentEntry[] = [
     id: 'ollama',
     name: 'Ollama',
     aliases: [],
-    support: 'planned',
+    support: 'launcher',
+    launches: ['claude-code', 'codex', 'copilot'],
+    gap: "Ollama's own agent (the bare `ollama` command) has no hooks belayd can use yet.",
     detect: (env) => exists(env.OLLAMA_MODELS ?? path.join(home(env), '.ollama')),
   },
 ];

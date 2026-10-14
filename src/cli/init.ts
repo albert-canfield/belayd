@@ -260,6 +260,16 @@ function otherAgents(chosen: AgentEntry[], env: NodeJS.ProcessEnv): string[] {
           ? `${agent.name} found. It runs the ${via.name} hooks, so it is covered too.`
           : `${agent.name} found. It runs ${via.name}'s hooks: add --agent ${via.id} to cover it.`,
       );
+    } else if (agent.support === 'launcher') {
+      const covered = agent
+        .launches!.map((id) => findAgent(id)!)
+        .filter((a) => chosen.includes(a))
+        .map((a) => a.name);
+      notes.push(
+        covered.length > 0
+          ? `${agent.name} found. ${listNames(covered)} started with it are covered by these hooks. ${agent.gap ?? ''}`.trim()
+          : `${agent.name} found. Agents it starts are covered once belayd is set up for them. ${agent.gap ?? ''}`.trim(),
+      );
     } else notes.push(`${agent.name} found. belayd does not set it up yet.`);
   }
   return notes;

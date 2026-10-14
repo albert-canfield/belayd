@@ -95,6 +95,14 @@ describe('the agent registry', () => {
       expect(findAgent(host.runsHooksOf!)?.support, host.id).toBe('hooks');
   });
 
+  it('points every launcher at agents belayd hooks into, and says what it misses', () => {
+    for (const launcher of AGENTS.filter((a) => a.support === 'launcher')) {
+      expect(launcher.launches?.length, launcher.id).toBeGreaterThan(0);
+      for (const id of launcher.launches!) expect(findAgent(id)?.support, id).toBe('hooks');
+      expect(launcher.gap, launcher.id).toBeTruthy();
+    }
+  });
+
   it('finds agents by id and alias, case-insensitively', () => {
     expect(findAgent('Claude')?.id).toBe('claude-code');
     expect(findAgent('codex')?.id).toBe('codex');

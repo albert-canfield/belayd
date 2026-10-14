@@ -77,7 +77,14 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     if (agent.support === 'hooks' || !agent.detect(process.env)) continue;
     if (agent.support === 'host')
       line('ok', `${agent.name} found: it runs the ${hostName(agent)} hooks`);
-    else line('warn', `${agent.name} found: belayd does not cover it yet`);
+    else if (agent.support === 'launcher') {
+      const names = agent.launches!.map((id) => AGENTS.find((a) => a.id === id)?.name ?? id);
+      line(
+        'ok',
+        `${agent.name} found: agents it starts (${names.join(', ')}) use their own belayd hooks`,
+        agent.gap,
+      );
+    } else line('warn', `${agent.name} found: belayd does not cover it yet`);
   }
 
   if (AuditLog.exists(state)) {
