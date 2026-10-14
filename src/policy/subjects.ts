@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalPath } from '../util/paths.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
@@ -26,6 +27,10 @@ export interface Subject {
   /** Text leaving the machine, scanned for secrets. */
   outbound: string[];
   codeFrom: string[];
+  /** Script files this subject runs. */
+  runs: string[];
+  /** Files whose contents decide what runs: package.json for `npm test`, the Makefile for `make`. */
+  drivenBy: string[];
   dynamic: boolean;
   unresolved: boolean;
   inlineCode: boolean;
@@ -161,6 +166,7 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
         cwd: ctx.cwd,
         home: ctx.home,
         env: safeEnv(),
+        readScript,
       });
       const subjects = analysis.invocations.map((inv) => fromInvocation(inv, ctx));
       if (analysis.errors.length > 0) {
@@ -353,6 +359,10 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     domains: [...domains],
     outbound,
     codeFrom: inv.codeFrom,
+    runs: inv.scripts.flatMap(bothForms),
+    drivenBy: drivers(program, positionals, raw, inv.cwd, ctx.workspace).flatMap((d) =>
+      d.endsWith('/') ? bothForms(d.slice(0, -1)).map((x) => `${x}/`) : bothForms(d),
+    ),
     dynamic: inv.dynamic,
     unresolved,
     inlineCode: inv.inlineCode,
@@ -418,6 +428,8 @@ function empty(kind: ActionKind, ctx: ActionContext, label: string): Subject {
     domains: [],
     outbound: [],
     codeFrom: [],
+    runs: [],
+    drivenBy: [],
     dynamic: false,
     unresolved: false,
     inlineCode: false,
@@ -433,6 +445,72 @@ function safeJson(value: unknown): string {
     return JSON.stringify(value) ?? '';
   } catch {
     return String(value);
+  }
+}
+
+const SCRIPT_RUNNERS = new Set(['run', 'run-script', 'test', 't', 'start', 'exec', 'x', 'dlx']);
+const GIT_HOOKED = new Set([
+  'commit',
+  'push',
+  'merge',
+  'rebase',
+  'checkout',
+  'switch',
+  'am',
+  'pull',
+  'cherry-pick',
+]);
+
+/** Files that decide what a runner does. A trailing slash means anything inside. */
+function drivers(
+  program: string | undefined,
+  positionals: string[],
+  raw: string[],
+  cwd: string | undefined,
+  workspace: string,
+): string[] {
+  if (!program || !cwd) return [];
+  const here = (f: string) => path.join(cwd, f);
+  switch (program) {
+    case 'npm':
+    case 'pnpm':
+    case 'yarn':
+    case 'bun':
+      return SCRIPT_RUNNERS.has(positionals[0] ?? '') ||
+        (program === 'yarn' && positionals.length > 0)
+        ? [here('package.json')]
+        : [];
+    case 'make':
+    case 'gmake': {
+      const f = raw.findIndex((a) => a === '-f' || a === '--file' || a === '--makefile');
+      if (f >= 0 && raw[f + 1]) return [path.resolve(cwd, raw[f + 1]!)];
+      return [here('Makefile'), here('makefile'), here('GNUmakefile')];
+    }
+    case 'just':
+      return [here('justfile'), here('Justfile'), here('.justfile')];
+    case 'task':
+      return [here('Taskfile.yml'), here('Taskfile.yaml')];
+    case 'pre-commit':
+      return [here('.pre-commit-config.yaml')];
+    case 'git':
+      return GIT_HOOKED.has(positionals[0] ?? '')
+        ? [`${path.join(workspace, '.git', 'hooks')}/`]
+        : [];
+    default:
+      return [];
+  }
+}
+
+const MAX_SCRIPT_BYTES = 256 * 1024;
+
+/** Reads a script before it runs, so `bash cleanup.sh` is checked line by line. */
+function readScript(p: string): string | undefined {
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size > MAX_SCRIPT_BYTES) return undefined;
+    return fs.readFileSync(p, 'utf8');
+  } catch {
+    return undefined;
   }
 }
 

@@ -52,6 +52,8 @@ export interface Invocation {
   remote: boolean;
   /** Text this invocation reads on stdin when statically known (heredoc, here-string, echo). */
   stdin: string | undefined;
+  /** Script files this invocation runs (`bash x.sh`, `python x.py`, `./x.sh`, `source x.sh`). */
+  scripts: string[];
   /** Human readable note for dynamic invocations. */
   note?: string;
 }
@@ -66,6 +68,8 @@ export interface AnalyzeOptions {
   home: string;
   /** Environment variables the analysis may resolve. Keep this to non-secret values. */
   env?: Record<string, string>;
+  /** Reads a script file so `bash x.sh` can be checked line by line. */
+  readScript?: (absPath: string) => string | undefined;
 }
 
 const MAX_DEPTH = 6;
@@ -197,6 +201,8 @@ interface Scope {
   aliases: Map<string, string>;
   /** Files written by network fetchers in this script (`curl -o x.sh`). */
   downloads: Map<string, string>;
+  /** Files written earlier in this same command (`echo ... > x.sh`). */
+  written: Set<string>;
 }
 
 interface Ctx {
@@ -222,6 +228,7 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     cwd: opts.cwd,
     aliases: new Map(),
     downloads: new Map(),
+    written: new Set(),
   };
   analyzer.source(command, scope, { depth: 0, via: [], remote: false }, undefined);
   return { invocations: analyzer.out, errors: analyzer.errors };
@@ -412,6 +419,7 @@ class Analyzer {
     const effectiveStdin: StdinInfo | undefined =
       inline !== undefined ? { producers: [], text: inline } : stdin;
     const program = this.invoke(words, text, scope, ctx, effectiveStdin, redirects);
+    this.trackWrites(program, words, redirects, scope);
 
     // Track state that later commands depend on.
     switch (program) {
@@ -503,12 +511,15 @@ class Analyzer {
       redirects,
       stdin: stdin?.text,
     };
+    let directScript: EvalWord | undefined;
     if (head.value.includes('/')) {
       const executed = resolveIn(scope.cwd, head.value, this.opts.home);
       const downloader = executed ? scope.downloads.get(executed) : undefined;
       if (downloader) inv.codeFrom = [downloader];
+      directScript = head;
     }
     this.push(inv);
+    if (directScript) this.runScript(inv, directScript, scope, ctx, false, 'shebang');
     this.trackDownloads(program, args, redirects, scope);
 
     const nested = (via: string): Ctx => ({ ...ctx, depth: ctx.depth + 1, via: [...ctx.via, via] });
@@ -596,7 +607,10 @@ class Analyzer {
       case 'source':
       case '.': {
         const file = args[0];
-        if (file) inv.codeFrom = this.codeSources(file, scope);
+        if (file) {
+          inv.codeFrom = this.codeSources(file, scope);
+          this.runScript(inv, file, scope, ctx, true, true);
+        }
         return program;
       }
       case 'ssh': {
@@ -661,8 +675,10 @@ class Analyzer {
         for (const w of args) inv.codeFrom.push(...w.subPrograms);
       } else if (!lower.some((a) => interp.module?.includes(a))) {
         const script = args.find((w) => !w.value.startsWith('-'));
-        if (script) inv.codeFrom.push(...this.codeSources(script, scope));
-        else this.stdinCode(inv, stdin, scope, ctx, false);
+        if (script) {
+          inv.codeFrom.push(...this.codeSources(script, scope));
+          this.runScript(inv, script, scope, ctx, false, false);
+        } else this.stdinCode(inv, stdin, scope, ctx, false);
       }
     }
     return program;
@@ -698,6 +714,7 @@ class Analyzer {
     // `sh -s args...` reads its code from stdin and treats the rest as arguments.
     if (first && !stdinMode) {
       inv.codeFrom.push(...this.codeSources(first, scope));
+      this.runScript(inv, first, scope, ctx, false, true);
       return;
     }
     this.stdinCode(inv, stdin, scope, ctx, true);
@@ -819,6 +836,60 @@ class Analyzer {
     const resolved = resolveIn(scope.cwd, file.value, this.opts.home);
     const downloader = resolved ? scope.downloads.get(resolved) : undefined;
     return downloader ? [downloader] : [];
+  }
+
+  /**
+   * A script about to run. Shell scripts are read and checked line by line, like
+   * anything typed. A script written earlier in the same command cannot be read in
+   * advance, so it counts as code belayd cannot see.
+   */
+  private runScript(
+    inv: Invocation,
+    file: EvalWord,
+    scope: Scope,
+    ctx: Ctx,
+    sameScope: boolean,
+    parse: boolean | 'shebang',
+  ): void {
+    if (!file.resolved || file.subPrograms.length > 0) return;
+    const abs = resolveIn(scope.cwd, file.value, this.opts.home);
+    if (!abs) return;
+    inv.scripts.push(abs);
+    if (scope.written.has(abs) && !scope.downloads.has(abs)) {
+      inv.dynamic = true;
+      inv.note = `runs ${file.value}, which this same command writes first, so belayd cannot read it in advance`;
+      return;
+    }
+    if (!parse || ctx.depth >= MAX_DEPTH) return;
+    const content = this.opts.readScript?.(abs);
+    if (content === undefined) return;
+    const shellish = /\.(sh|bash|zsh)$/.test(abs) || /^#!.*\b(ba|z|da|k)?sh\b/.test(content);
+    if (parse === 'shebang' && !shellish) return;
+    this.source(
+      content,
+      sameScope ? scope : cloneScope(scope),
+      { ...ctx, depth: ctx.depth + 1, via: [...ctx.via, path.posix.basename(abs)] },
+      undefined,
+    );
+  }
+
+  private trackWrites(
+    program: string,
+    words: EvalWord[],
+    redirects: Redirect[],
+    scope: Scope,
+  ): void {
+    const add = (p: string) => {
+      const abs = resolveIn(scope.cwd, p, this.opts.home);
+      if (abs) scope.written.add(abs);
+    };
+    for (const r of redirects) if (r.op.includes('>') && r.resolved) add(r.target);
+    const args = words.slice(1).filter((w) => w.resolved && !w.value.startsWith('-'));
+    if (program === 'tee') args.forEach((w) => add(w.value));
+    if (['cp', 'mv', 'install', 'ln'].includes(program) && args.length > 1) {
+      add(args[args.length - 1]!.value);
+    }
+    for (const file of scope.downloads.keys()) scope.written.add(file);
   }
 
   private trackDownloads(
@@ -1080,6 +1151,7 @@ class Analyzer {
       via: ctx.via,
       remote: ctx.remote,
       stdin: undefined,
+      scripts: [],
     };
   }
 
@@ -1104,6 +1176,7 @@ function cloneScope(scope: Scope): Scope {
     cwd: scope.cwd,
     aliases: new Map(scope.aliases),
     downloads: scope.downloads, // shared: a download in a subshell still lands on disk
+    written: scope.written,
   };
 }
 
