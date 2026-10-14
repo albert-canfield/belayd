@@ -188,6 +188,8 @@ Strategy: native hooks with `failClosed: true`, native `ask` for shell and MCP, 
 
 ## Gemini CLI
 
+Update 14 Oct 2026: the Gemini CLI docs now say that unpaid-tier and Google One users were moved to a new Antigravity CLI on 18 June 2026. Gemini CLI remains for paid and API users. Its hook contract below is still accurate (checked against the hooks reference: `BeforeTool` returns `{"decision": "deny", "reason": ...}`, exit 2 blocks, other exit codes warn and continue, timeouts are in milliseconds, there is no tool call id). belayd v0.1 does not ship a Gemini adapter; the next step is to look at Antigravity CLI's extension points and support whichever has the users.
+
 Sources: [Hooks](https://geminicli.com/docs/hooks/), [Hooks reference](https://geminicli.com/docs/hooks/reference/), [Policy engine](https://geminicli.com/docs/reference/policy-engine/), [Trusted folders](https://geminicli.com/docs/cli/trusted-folders/). Stable v0.63.0 (6 Oct 2026).
 
 - Hooks in `~/.gemini/settings.json` and `.gemini/settings.json`, on by default since v0.26. `BeforeTool` can deny (`{"decision": "deny", "reason": ...}` or exit 2) and rewrite arguments, but cannot ask. Timeouts are in milliseconds, default 60000.
