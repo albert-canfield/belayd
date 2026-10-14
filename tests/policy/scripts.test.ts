@@ -191,4 +191,12 @@ describe('runners and hooks the agent changed in this session', () => {
     // The same eval typed by the agent is still unknown code.
     expect(await verdict(`eval "set -- $(printf '%s' "$X")"`)).toBe('ask');
   });
+
+  it('knows a virtualenv writes its own activate script', async () => {
+    expect(await verdict('python3 -m venv .venv && source .venv/bin/activate')).toBe('pass');
+    expect(await verdict('uv venv && . .venv/bin/activate')).toBe('pass');
+    expect(await verdict('virtualenv env && source env/bin/activate')).toBe('pass');
+    // Without the venv step, a missing activate script is still unknown code.
+    expect(await verdict('source .venv/bin/activate')).toBe('ask');
+  });
 });

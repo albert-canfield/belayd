@@ -292,6 +292,8 @@ interface Scope {
   written: Set<string>;
   /** `$1`, `$2`, `"$@"` inside a script, when its arguments are known. */
   positional?: string[];
+  /** Scripts that a trusted tool creates earlier in this command (`python -m venv`). */
+  generated: Set<string>;
 }
 
 interface Ctx {
@@ -320,6 +322,7 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     aliases: new Map(),
     downloads: new Map(),
     written: new Set(),
+    generated: new Set(),
   };
   analyzer.source(command, scope, { depth: 0, via: [], remote: false }, undefined);
   return { invocations: analyzer.out, errors: analyzer.errors };
@@ -892,6 +895,8 @@ class Analyzer {
       return program;
     }
 
+    this.trackVirtualenv(program, args, scope);
+
     if (AWKS.has(program)) {
       this.awk(inv, args, text, scope, nested(`${program} program`));
       return program;
@@ -1116,6 +1121,22 @@ class Analyzer {
     return true;
   }
 
+  /** `python -m venv dir`, `virtualenv dir` and `uv venv [dir]` write an activate script. */
+  private trackVirtualenv(program: string, args: EvalWord[], scope: Scope): void {
+    const values = args.map((w) => (w.resolved ? w.value : undefined));
+    let rest: (string | undefined)[] | undefined;
+    const m = values.indexOf('-m');
+    if (/^python[\d.]*$/.test(program) && m >= 0 && /^(venv|virtualenv)$/.test(values[m + 1] ?? ''))
+      rest = values.slice(m + 2);
+    else if (program === 'virtualenv') rest = values;
+    else if (program === 'uv' && values[0] === 'venv') rest = [...values.slice(1), '.venv'];
+    const dir = rest?.find((v) => v !== undefined && !v.startsWith('-'));
+    const abs = dir ? resolveIn(scope.cwd, dir, this.opts.home) : undefined;
+    if (!abs) return;
+    for (const name of ['activate', 'activate.fish', 'activate.csh'])
+      scope.generated.add(path.join(abs, 'bin', name));
+  }
+
   /**
    * awk programs run shell commands through system(), `"cmd" | getline` and
    * `print | "cmd"`. Those are read like any other command.
@@ -1183,8 +1204,10 @@ class Analyzer {
     };
     // With parallel tool calls, the agent may be writing this script right now. A script
     // that does not exist yet cannot be read, so it counts as code belayd cannot see.
-    if (this.opts.fileExists && !this.opts.fileExists(abs))
+    if (this.opts.fileExists && !this.opts.fileExists(abs)) {
+      if (scope.generated.has(abs)) return; // `python -m venv .venv && source .venv/bin/activate`
       return unseen('does not exist yet, so belayd cannot read it first');
+    }
     const script = this.opts.readScript(abs);
     if (!script) return unseen('belayd cannot read');
     const shellish =
@@ -1608,6 +1631,7 @@ function cloneScope(scope: Scope): Scope {
     aliases: new Map(scope.aliases),
     downloads: scope.downloads, // shared: a download in a subshell still lands on disk
     written: scope.written,
+    generated: scope.generated,
     ...(scope.positional ? { positional: scope.positional } : {}),
   };
 }
