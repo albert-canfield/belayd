@@ -355,6 +355,8 @@ const TMUX_DYNAMIC = new Set([
 ]);
 
 const RUNNERS = new Set(['npx', 'pnpx', 'bunx', 'uvx']);
+/** Packages whose command has another name: `npx belayd-cli approve` runs `belayd approve`. */
+const PACKAGE_COMMANDS = new Map([['belayd-cli', 'belayd']]);
 
 interface EvalWord {
   text: string;
@@ -1502,7 +1504,7 @@ class Analyzer {
     if (!pkg) return;
     const bin = pkg.value.replace(/^(@[^/]+\/[^@]+|[^@]+)@.*$/, '$1');
     this.invoke(
-      [{ ...pkg, value: path.posix.basename(bin) }, ...rest.slice(1)],
+      [{ ...pkg, value: PACKAGE_COMMANDS.get(bin) ?? path.posix.basename(bin) }, ...rest.slice(1)],
       text,
       scope,
       ctx,

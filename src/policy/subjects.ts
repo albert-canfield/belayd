@@ -602,7 +602,7 @@ function safeJson(value: unknown): string {
 }
 
 const JS_RUNTIMES = new Set(['node', 'nodejs', 'bun']);
-const BELAYD_BIN = /(^|\/)(belayd|leashd)\/dist\/bin\.js$/;
+const BELAYD_BIN = /(^|\/)(belayd|belayd-cli|leashd)\/dist\/bin\.js$/;
 
 const SCRIPT_RUNNERS = new Set([
   'run',

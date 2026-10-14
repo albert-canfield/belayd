@@ -310,6 +310,19 @@
     cmd: 'node /usr/local/lib/node_modules/belayd/dist/bin.js approve mv7b-3e85 --allow',
     balanced: deny,
   }
+# The npm package is belayd-cli, and its command is belayd.
+- { cmd: 'npx belayd-cli approve mv7b-3e85 --allow', balanced: deny }
+- { cmd: 'npx -y belayd-cli@latest trust', balanced: deny }
+- { cmd: 'npx -p belayd-cli belayd uninstall --yes', balanced: deny }
+- { cmd: 'pnpm dlx belayd-cli approve mv7b-3e85 --allow', balanced: deny }
+- { cmd: 'npm exec belayd-cli approve mv7b-3e85 --allow', balanced: deny }
+- { cmd: 'npm exec -- belayd-cli approve mv7b-3e85 --allow', balanced: deny }
+- { cmd: 'bunx belayd-cli approve mv7b-3e85 --allow', balanced: deny }
+- {
+    cmd: 'node /usr/local/lib/node_modules/belayd-cli/dist/bin.js approve mv7b-3e85 --allow',
+    balanced: deny,
+  }
+- { cmd: 'npx belayd-cli check "rm -rf ~"', balanced: pass }
 - { cmd: 'belayd uninstall --yes', balanced: deny }
 - { cmd: 'cat ~/.belayd/ui-token', balanced: deny }
 - { cmd: 'echo "{}" > ~/.belayd/approvals/decided/mv7b-3e85.json', balanced: deny }
