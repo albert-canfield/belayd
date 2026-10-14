@@ -308,8 +308,27 @@ export class Shadow {
     return { kept, skipped };
   }
 
+  /** Records the current state of `paths`: present files are added, missing ones removed. */
   private addPaths(paths: string[]): void {
-    this.git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], paths.join('\0'));
+    const present = paths.filter((p) => fs.existsSync(path.join(this.workspace, p)));
+    const missing = paths.filter((p) => !present.includes(p));
+    if (present.length > 0) {
+      this.git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], present.join('\0'));
+    }
+    if (missing.length > 0) {
+      this.git(
+        [
+          'rm',
+          '-q',
+          '-r',
+          '--cached',
+          '--ignore-unmatch',
+          '--pathspec-from-file=-',
+          '--pathspec-file-nul',
+        ],
+        missing.join('\0'),
+      );
+    }
   }
 
   private writeTree(): string {
