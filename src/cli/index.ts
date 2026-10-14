@@ -38,6 +38,10 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--preset <name>', 'policy preset for the new belayd.yaml', 'balanced')
     .option('--global', 'install into your user-level agent settings instead of this project')
     .option(
+      '--agent <names>',
+      'which agents to set up: claude-code, codex (default: the ones found)',
+    )
+    .option(
       '--claude-config-dir <dir>',
       'Claude Code config directory (default: $CLAUDE_CONFIG_DIR or ~/.claude)',
     )
@@ -51,6 +55,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .command('uninstall')
     .description('Remove every hook belayd installed')
     .option('--global', 'remove from your user-level agent settings')
+    .option('--agent <names>', 'only these agents: claude-code, codex')
     .option('--claude-config-dir <dir>', 'Claude Code config directory')
     .option('-y, --yes', 'do not ask for confirmation')
     .action(async (opts) => {
