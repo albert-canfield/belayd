@@ -50,7 +50,9 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
 
 ## What you get
 
-**It reads commands the way your shell does.** Not a regex over a string: belayd parses the command and follows quotes, variables, `cd`, aliases, functions, `bash -c`, `eval`, `$(...)`, heredocs, pipes into interpreters and even base64, then checks every program that would actually run. Anything it can't see into gets a question, never a guess.
+**It reads commands the way your shell does.** Not a regex over a string: belayd parses the command and follows quotes, variables, `cd`, aliases, functions, `bash -c`, `eval`, `$(...)`, heredocs, pipes into interpreters and even base64, then checks every program that would actually run. It reads shell scripts before they run too, so `bash cleanup.sh` is judged by what is inside `cleanup.sh`. Anything it can't see into gets a question, never a guess.
+
+**It notices the sneaky version.** The classic way around a command allowlist is to edit `package.json` and then run `npm test`. belayd remembers which files the agent changed in the session, and asks before it runs scripts or Git hooks from one of them.
 
 **It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day.
 

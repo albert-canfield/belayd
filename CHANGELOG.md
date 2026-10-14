@@ -9,6 +9,8 @@ The first release. belayd sits between AI coding agents and your machine: one po
 - Shell commands are parsed, not pattern-matched. belayd follows quoting, variables, `cd`, aliases, functions, `bash -c`, `eval`, command and process substitution, heredocs and here-strings, pipes into interpreters, base64-encoded scripts, downloads that are executed later, `find -exec` and `-delete`, `xargs`, and wrappers such as `sudo`, `env`, `nice` and `timeout`.
 - Three presets: `balanced` (default), `strict` and `yolo-with-undo`. Your `belayd.yaml` rules win over the preset; `final` preset rules can only be switched off explicitly.
 - Rules match programs and subcommands, arguments, paths read or written (judged where they really point, through symlinks), network domains, code piped from the internet, and secrets in outgoing data.
+- Shell scripts are read before they run (`bash x.sh`, `./x.sh`, `source x.sh`) and checked line by line.
+- belayd remembers which files the agent changed in a session and asks before running scripts or hooks from them (`npm test` after editing `package.json`, `make` after editing the `Makefile`, `git commit` after adding a hook).
 - MCP tool calls get the same file and shell rules.
 - `belayd check` shows a decision without running anything.
 
