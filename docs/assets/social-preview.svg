@@ -27,5 +27,5 @@
     <text x="678" y="428" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="17" fill="#e7e5e4" xml:space="preserve"><tspan fill="#a8a29e">$</tspan> <tspan fill="#a8a29e">belayd</tspan> undo 7</text>
     <text x="678" y="456" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="17" fill="#4ade80" xml:space="preserve">  ✔ <tspan font-weight="600">restored</tspan><tspan fill="#a8a29e"> · src/app.ts, removed out.json</tspan></text>
   </g>
-  <text x="72" y="580" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="20" fill="#a8a29e">npm install -g belayd  ·  belayd init</text>
+  <text x="72" y="580" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="20" fill="#a8a29e">npm install -g belayd-cli  ·  belayd init</text>
 </svg>

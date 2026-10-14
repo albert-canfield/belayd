@@ -123,7 +123,7 @@ describe('belayd init and uninstall for Claude Code', () => {
       encoding: 'utf8',
     });
     expect(r.status).toBe(69);
-    expect(r.stderr).toMatch(/npm install -g belayd/);
+    expect(r.stderr).toMatch(/npm install -g belayd-cli/);
     expect(fs.existsSync(projectSettings())).toBe(false);
   });
 

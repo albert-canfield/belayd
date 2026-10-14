@@ -46,7 +46,7 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
         'belayd is running from a temporary npx folder, which npm can delete at any time.',
         'A hook pointing there would break later, so install belayd first:',
         '',
-        '  npm install -g belayd',
+        '  npm install -g belayd-cli',
         '  belayd init',
       ].join('\n'),
     );

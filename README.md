@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/belayd"><img alt="npm" src="https://img.shields.io/npm/v/belayd?color=ea580c&label=npm"></a>
+  <a href="https://www.npmjs.com/package/belayd-cli"><img alt="npm" src="https://img.shields.io/npm/v/belayd-cli?color=ea580c&label=npm"></a>
   <a href="https://github.com/albert-canfield/belayd/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/albert-canfield/belayd/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Node 22 or newer" src="https://img.shields.io/badge/node-22%2B-3c873a">
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-blue"></a>
@@ -23,12 +23,14 @@ Coding agents are fast, confident, and running with your permissions. Most days 
 ## Up and running in two minutes
 
 ```sh
-npm install -g belayd
+npm install -g belayd-cli
 cd your-project
 belayd init
 ```
 
 `init` finds the coding agents on your machine, shows you exactly what it will add to their settings, keeps a backup, and writes a `belayd.yaml` for the project. Restart your agent and you're covered. Nothing ever leaves your machine.
+
+The package is `belayd-cli` because npm thinks `belayd` looks too much like `delay`. The command it installs is plain `belayd`.
 
 Try it without an agent:
 

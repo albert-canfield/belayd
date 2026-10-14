@@ -7,7 +7,7 @@ Status: draft for review (M1). Working name `belayd`, see [Name](#name) for an o
 A local safety and approval layer for AI coding agents. One policy file, one audit log and one undo command across Claude Code, Codex, Cursor, Gemini CLI and MCP servers.
 
 ```
-npx belayd init            # detect agents, install hooks, write belayd.yaml
+npx belayd-cli init            # detect agents, install hooks, write belayd.yaml
 belayd check 'rm -rf ~'    # dry-run a command against the policy
 belayd log                 # audit trail
 belayd replay <session>    # readable timeline
@@ -306,7 +306,7 @@ Voice rules: short concrete sentences, a bit of personality, no em-dashes, no "s
 
 1. **Name**: belayd. See below.
 2. **Snapshot storage**: a separate shadow repo per workspace under `$BELAYD_HOME/snapshots`. Nothing is ever written to the user's `.git`.
-3. **Install path**: `npx belayd init` installs belayd globally and pins an absolute hook path.
+3. **Install path**: `npx belayd-cli init` installs belayd globally and pins an absolute hook path.
 4. **Second agent**: Codex CLI. Cursor gets partial coverage in v0.1 through host detection.
 5. **MCP gateway scope**: stdio servers only in v0.1. OAuth remote servers stay covered by agent hooks.
 

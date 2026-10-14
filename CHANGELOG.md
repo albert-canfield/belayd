@@ -4,6 +4,8 @@
 
 The first release. belayd sits between AI coding agents and your machine: one policy, one audit trail and one undo button for Claude Code, Codex, Copilot CLI, Gemini CLI and MCP servers.
 
+Install it with `npm install -g belayd-cli`. The command is `belayd`.
+
 ### Policy
 
 - Shell commands are parsed, not pattern-matched. belayd follows quoting, variables and word splitting, `cd`, aliases, functions, `bash -c`, `eval`, command and process substitution, heredocs and here-strings, pipes into interpreters, base64-encoded scripts, downloads that are executed later, `find -exec` and `-delete`, `xargs`, `parallel`, `awk`'s `system()`, and wrappers such as `sudo`, `env`, `timeout`, `setsid`, `script`, `tmux`, `screen` and `at`. Anything it cannot see into gets a question.
