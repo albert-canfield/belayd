@@ -30,7 +30,12 @@ export function sandbox(): Sandbox {
     NO_COLOR: '1',
   };
   fs.mkdirSync(env.HOME!, { recursive: true });
-  return { dir, project, env, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  return {
+    dir,
+    project,
+    env,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+  };
 }
 
 export function belayd(

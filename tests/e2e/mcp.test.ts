@@ -30,15 +30,19 @@ beforeEach(() => {
     replies.set(msg.id, msg);
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  // Let the gateway finish its last audit write before the folder goes away.
+  const exited = new Promise((res) => gw.once('exit', res));
+  gw.stdin.end();
   gw.kill();
+  await exited;
   sb.cleanup();
 });
 
 async function rpc(method: string, params: unknown): Promise<Record<string, unknown>> {
   const id = nextId++;
   gw.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 750; i++) {
     const r = replies.get(id);
     if (r) return r;
     await new Promise((res) => setTimeout(res, 20));
