@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { readRegularFile } from '../util/files.js';
 import { canonicalPath, ensurePrivateDir } from '../util/paths.js';
 
 /** Stands for a folder where a file was expected; equal to no blob id. */
@@ -74,7 +75,12 @@ export class Shadow {
   constructor(
     private readonly belaydHome: string,
     workspace: string,
-    private readonly opts: { maxFileSize?: number; maxFiles?: number } = {},
+    private readonly opts: {
+      maxFileSize?: number;
+      maxFiles?: number;
+      /** Epoch ms by which a snapshot must be done (a hook has to answer the agent). */
+      deadline?: number;
+    } = {},
   ) {
     workspace = canonicalPath(workspace);
     this.workspace = workspace;
@@ -130,7 +136,7 @@ export class Shadow {
     const excludes = [...DEFAULT_EXCLUDES];
     const projectExclude = path.join(this.workspace, '.git', 'info', 'exclude');
     try {
-      excludes.push(...fs.readFileSync(projectExclude, 'utf8').split('\n'));
+      excludes.push(...readRegularFile(projectExclude, 1024 * 1024).text.split('\n'));
     } catch {
       // not a git repository, or no local excludes
     }
@@ -446,7 +452,7 @@ export class Shadow {
         cwd: this.workspace,
         input: input ?? '',
         maxBuffer: 256 * 1024 * 1024,
-        timeout: 60_000,
+        timeout: Math.max(1000, Math.min(60_000, (this.opts.deadline ?? Infinity) - Date.now())),
         stdio: ['pipe', 'pipe', 'pipe'],
       }).toString('utf8');
     } catch (err) {
@@ -471,6 +477,9 @@ export class Shadow {
         fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
         break;
       } catch {
+        // A hook in a hurry gives up on the snapshot rather than on its answer.
+        if (this.opts.deadline !== undefined && Date.now() > this.opts.deadline)
+          throw new SnapshotError('another belayd call is still taking a snapshot');
         if (staleLock(lock) || Date.now() > deadline) {
           fs.rmSync(lock, { force: true });
           continue;

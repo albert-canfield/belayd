@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -118,6 +119,23 @@ describe('failMode', () => {
     expect(fs.readFileSync(path.join(sb.env.BELAYD_HOME!, 'errors.log'), 'utf8')).toMatch(
       /watchdog/,
     );
+  });
+
+  it('never blocks a call because its snapshot is slow', () => {
+    // Another call holds the snapshot lock for this project.
+    const workspace = fs.realpathSync(sb.project);
+    const id = crypto.createHash('sha256').update(workspace).digest('hex').slice(0, 16);
+    const name = path.basename(workspace).replace(/[^A-Za-z0-9._-]/g, '_');
+    const dir = path.join(sb.env.BELAYD_HOME!, 'snapshots', `${name}-${id}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'belayd.lock'), String(process.pid));
+    const started = Date.now();
+    const r = belayd(sb, ['hook', 'claude-code', '--timeout', '8'], {
+      input: hookPayload(sb, 'Bash', { command: 'touch notes.txt' }),
+    });
+    expect(r.status).toBe(0);
+    expect(decision(r.stdout)).toBe('pass');
+    expect(Date.now() - started).toBeLessThan(7000);
   });
 
   it('lets the agent continue when the policy says failMode: open, and logs it', () => {

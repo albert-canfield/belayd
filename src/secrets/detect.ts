@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { readRegularFile } from '../util/files.js';
 
 export interface SecretMatch {
   /** Detector id, e.g. `github-token`, or `env:STRIPE_KEY` for a value from a workspace .env file. */
@@ -69,7 +70,8 @@ export function loadEnvValues(workspace: string): Map<string, string> {
     if (!ENV_FILE.test(name) || ENV_EXAMPLE.test(name)) continue;
     let content: string;
     try {
-      content = fs.readFileSync(path.join(workspace, name), 'utf8');
+      // A .env that is a named pipe must not hang the check.
+      content = readRegularFile(path.join(workspace, name), 1024 * 1024).text;
     } catch {
       continue;
     }

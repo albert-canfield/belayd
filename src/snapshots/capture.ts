@@ -26,7 +26,11 @@ export function capture(
   policy: CompiledPolicy,
   action: Action,
   ctx: ActionContext,
-  onChanged?: (paths: string[]) => void,
+  opts: {
+    onChanged?: (paths: string[]) => void;
+    /** Epoch ms by which to give up on the snapshot, so the hook still answers in time. */
+    deadline?: number;
+  } = {},
 ): string | undefined {
   if (!policy.snapshots.enabled) return undefined;
   try {
@@ -35,10 +39,11 @@ export function capture(
     if (tooBroad(ctx.workspace, ctx.home)) return undefined;
     const shadow = new Shadow(belaydHome, ctx.workspace, {
       maxFileSize: policy.snapshots.maxFileSize,
+      ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}),
     });
     const { changed, ...snap } =
       scope.kind === 'all' ? shadow.snapshotAll() : shadow.snapshotPaths(scope.paths);
-    if (changed && onChanged) onChanged(changed.map((p) => path.join(ctx.workspace, p)));
+    if (changed && opts.onChanged) opts.onChanged(changed.map((p) => path.join(ctx.workspace, p)));
     return JSON.stringify(snap);
   } catch (err) {
     logError(belaydHome, `snapshot: ${(err as Error).message}`);

@@ -97,7 +97,10 @@ export async function handleToolHook(
       // What the step wrote: what its command says, and what the snapshot saw change,
       // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
       const written = buildSubjects(action, ctxBase).flatMap((s) => s.writes);
-      snapshot = capture(stateDir, policy, action, ctxBase, (paths) => written.push(...paths));
+      snapshot = capture(stateDir, policy, action, ctxBase, {
+        onChanged: (paths) => written.push(...paths),
+        deadline: started + (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000 - SAFETY_MARGIN_MS,
+      });
       addSessionWrites(stateDir, session, written);
     } catch {
       // recording the outcome matters more than the snapshot
@@ -176,9 +179,15 @@ export async function handleToolHook(
       ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
     };
 
+    // Once a call is cleared to run, the watchdog has done its job: a slow snapshot must
+    // never turn into a block, and snapshot failures never change a decision.
+    const answerBy = started + timeoutMs - SAFETY_MARGIN_MS;
     if (decision.verdict !== 'ask') {
+      if (decision.verdict !== 'deny') watchdog.stop();
       const snapshot =
-        decision.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
+        decision.verdict === 'deny'
+          ? undefined
+          : capture(stateDir, policy, action, ctx, { deadline: answerBy });
       await audit(decision.verdict, { ...facts, ...(snapshot ? { snapshot } : {}) });
       if (decision.verdict === 'deny') {
         return dialect.respond('deny', blocked(decision.reason, rule), { agent });
@@ -201,8 +210,11 @@ export async function handleToolHook(
       canAskNatively: dialect.canAskNatively(agent, deps.env),
       binPath: deps.binPath ?? process.argv[1] ?? '',
     });
+    if (resolution.verdict !== 'deny') watchdog.stop();
     const snapshot =
-      resolution.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
+      resolution.verdict === 'deny'
+        ? undefined
+        : capture(stateDir, policy, action, ctx, { deadline: answerBy });
     await audit(resolution.verdict, {
       ...facts,
       ...(resolution.answeredBy ? { answeredBy: resolution.answeredBy } : {}),

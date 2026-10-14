@@ -104,7 +104,9 @@ export function runGateway(opts: GatewayOptions): Promise<number> {
       const policy = await loadPolicy({ workspace, belaydHome: stateDir }).catch(() => undefined);
       const written = buildSubjects(call.action, call.ctx).flatMap((s) => s.writes);
       const snapshot = policy
-        ? capture(stateDir, policy, call.action, call.ctx, (paths) => written.push(...paths))
+        ? capture(stateDir, policy, call.action, call.ctx, {
+            onChanged: (paths) => written.push(...paths),
+          })
         : undefined;
       if (outcome === 'ran') addSessionWrites(stateDir, session, written);
       await record(stateDir, {
