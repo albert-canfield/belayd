@@ -171,12 +171,15 @@ const SECRET_PROBES = [
   '.git-credentials',
 ];
 
-/** The secret names a glob in `dir` could match, as paths. */
-export function secretProbes(dir: string, glob: string): string[] {
+/**
+ * The secret names a glob in `dir` could match, as paths. Shell globs leave dotfiles
+ * out (`*` does not match `.env`, `.e*` does); the globs of the Grep and Glob tools
+ * follow ripgrep and gitignore, where `*.env` matches `.env` too.
+ */
+export function secretProbes(dir: string, glob: string, dot = false): string[] {
   let isMatch: (s: string) => boolean;
   try {
-    // Like the shell, `*` does not match dotfiles; `.e*` does.
-    isMatch = picomatch(glob, { dot: false, nocase: process.platform !== 'linux' });
+    isMatch = picomatch(glob, { dot, nocase: process.platform !== 'linux' });
   } catch {
     return [];
   }
@@ -255,7 +258,7 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
     case 'read': {
       const p = absolute(action.path, ctx);
       const probes = action.glob
-        ? secretProbes(p[p.length - 1]!, action.glob).flatMap(bothForms)
+        ? secretProbes(p[p.length - 1]!, action.glob, true).flatMap(bothForms)
         : [];
       const all = [...p, ...probes];
       return [{ ...empty('read', ctx, action.path), paths: all, reads: all }];
