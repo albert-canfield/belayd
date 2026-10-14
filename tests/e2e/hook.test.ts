@@ -84,3 +84,25 @@ describe('session memory (built binary)', () => {
     expect(r.stdout).toMatch(/package\.json/);
   });
 });
+
+describe('failMode', () => {
+  const payload = () => hookPayload(sb, 'Bash', { command: 'npm test' });
+
+  it('blocks on an internal error by default', () => {
+    const r = hook(payload(), { BELAYD_FAULT: 'after-policy' });
+    expect(decision(r.stdout)).toBe('deny');
+    expect(r.stdout).toMatch(/injected fault/);
+  });
+
+  it('lets the agent continue when the policy says failMode: open, and logs it', () => {
+    fs.writeFileSync(path.join(sb.project, 'belayd.yaml'), 'version: 1\nfailMode: open\n');
+    const r = hook(payload(), { BELAYD_FAULT: 'after-policy' });
+    expect(r.stdout).toBe('');
+    const log = JSON.parse(belayd(sb, ['log', '--json']).stdout) as {
+      verdict: string;
+      reason: string;
+    }[];
+    expect(log.at(-1)).toMatchObject({ verdict: 'error' });
+    expect(log.at(-1)?.reason).toMatch(/failMode: open/);
+  });
+});

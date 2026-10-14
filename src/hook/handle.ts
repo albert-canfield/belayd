@@ -135,6 +135,7 @@ export async function handleToolHook(
       ...extra,
     });
 
+  let failMode: 'open' | 'closed' = 'closed';
   try {
     const ctx: ActionContext = {
       ...ctxBase,
@@ -143,6 +144,9 @@ export async function handleToolHook(
       ...(input.tool_use_id ? { toolUseId: input.tool_use_id } : {}),
     };
     const policy = await loadPolicy({ workspace, belaydHome: stateDir });
+    failMode = policy.failMode;
+    // Fault injection for the test suite, which proves that failures block.
+    if (deps.env.BELAYD_FAULT === 'after-policy') throw new Error('injected fault');
     const decision = evaluate(action, ctx, policy, {
       belaydHome: stateDir,
       sessionWrites: sessionWrites(stateDir, session),
@@ -190,6 +194,18 @@ export async function handleToolHook(
     });
   } catch (err) {
     const message = (err as Error).message;
+    if (failMode === 'open') {
+      // The user chose to let the agent continue when belayd itself breaks. Logged every time.
+      await audit('pass', {
+        verdict: 'error',
+        reason: `belayd error (failMode: open): ${message}`,
+      });
+      return dialect.respond(
+        'pass',
+        `belayd error, continuing because failMode is open: ${message}`,
+        {},
+      );
+    }
     await audit('deny', { verdict: 'error', reason: `belayd error: ${message}` });
     return dialect.respond(
       'deny',
