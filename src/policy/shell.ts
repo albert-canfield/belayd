@@ -39,6 +39,8 @@ export interface Invocation {
   cwd: string | undefined;
   /** When `cwd` is undefined because branches disagree: the folders it can be. */
   cwdChoices?: string[];
+  /** True when cwdChoices lists every folder it can be, not only some. */
+  cwdExhaustive?: boolean;
   /** The program, or the code it runs, cannot be known statically. */
   dynamic: boolean;
   /** At least one argument could not be resolved (variables, `$(...)`, stdin from xargs). */
@@ -250,6 +252,51 @@ const PASSTHROUGH = new Set([
   'firejail',
 ]);
 const AWKS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+/** Functions bash and zsh call on their own, without the command naming them. */
+const HOOK_FUNCTIONS = new Set([
+  'command_not_found_handle',
+  'command_not_found_handler',
+  'precmd',
+  'preexec',
+  'chpwd',
+  'periodic',
+  'zshexit',
+  'zshaddhistory',
+]);
+/**
+ * Environment variables that point at where tools are installed. A program path built
+ * from one of them (`"$JAVA_HOME/bin/java"`) is judged by its name. Shell-set variables
+ * like `$_` or `$REPLY` are never on this list: the command itself controls those.
+ */
+const ENV_ROOTS = new Set([
+  'JAVA_HOME',
+  'JDK_HOME',
+  'JRE_HOME',
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_NDK_HOME',
+  'GRADLE_HOME',
+  'GRADLE_USER_HOME',
+  'MAVEN_HOME',
+  'M2_HOME',
+  'GOROOT',
+  'GOPATH',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'PYENV_ROOT',
+  'NVM_DIR',
+  'VIRTUAL_ENV',
+  'CONDA_PREFIX',
+  'HOMEBREW_PREFIX',
+  'SDKMAN_DIR',
+  'ASDF_DIR',
+  'DOTNET_ROOT',
+  'FLUTTER_ROOT',
+  'PNPM_HOME',
+  'BUN_INSTALL',
+  'DENO_INSTALL',
+  'VOLTA_HOME',
+]);
 /** Programs that cannot write files, so a venv's activate script is still the one it wrote. */
 const KEEPS_GENERATED = new Set([
   'cd',
@@ -323,8 +370,13 @@ interface EvalWord {
   fields?: string[][];
   /** Unknown only because of environment variables (`$JAVA_HOME/bin/java`). */
   envOnly?: boolean;
-  /** Its several values are what a variable may hold, not words that all run. */
-  choice?: boolean;
+  /**
+   * Known values a branch may have left in a variable this word uses, as the words
+   * each would give. The word itself stays unknown; these are only checked on the side.
+   */
+  candidates?: string[][];
+  /** True when `candidates` are all the values this word can have. */
+  exhaustive?: boolean;
 }
 
 interface Scope {
@@ -340,16 +392,26 @@ interface Scope {
   /** Scripts that a trusted tool creates earlier in this command (`python -m venv`). */
   generated: Set<string>;
   /** Functions defined so far, checked again at each call with that call's arguments. */
-  functions: Map<string, { body: AnyNode; src: string }>;
+  functions: Map<string, FunctionDef[]>;
   /** When `cwd` is undefined because branches disagree: the folders it can be. */
   cwdChoices?: string[];
+  /** True when cwdChoices lists every folder it can be, not only some. */
+  cwdExhaustive?: boolean;
   /** Variables that branches left holding one of a few known values. */
   choices: Map<string, string[]>;
+  /** Variables in `choices` whose list is complete: every path left a known value. */
+  exhaustive: Set<string>;
   /**
    * Variables whose value is unknown but which certainly name this program, like
    * JAVACMD in gradlew: `$JAVA_HOME/bin/java` in one branch and `java` in the other.
    */
   programs: Map<string, string>;
+}
+
+/** A function body. Branches can leave several definitions of one name. */
+interface FunctionDef {
+  body: AnyNode;
+  src: string;
 }
 
 interface Ctx {
@@ -384,8 +446,10 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     functions: new Map(),
     programs: new Map(),
     choices: new Map(),
+    exhaustive: new Set(),
   };
   analyzer.source(command, scope, { depth: 0, via: [], remote: false }, undefined);
+  analyzer.finishTraps();
   return { invocations: analyzer.out, errors: analyzer.errors };
 }
 
@@ -406,6 +470,13 @@ class Analyzer {
   /** Characters left to parse. Scripts that run each other many times over stop here. */
   private budget = MAX_SOURCE_CHARS;
   private readonly parsed = new Map<string, ParsedScript>();
+  /** States at `break`/`continue` in the loops, and `return` in the functions, being read. */
+  private readonly loopExits: Scope[][] = [];
+  private readonly returns: Scope[][] = [];
+  /** Trap code, checked again once the whole command has been read. */
+  readonly traps: { code: EvalWord; text: string; scope: Scope; ctx: Ctx }[] = [];
+  /** Environment roots the analysed code names as a variable to set, read or export. */
+  private readonly touched = new Set<string>();
   private ifsMentioned = false;
   private exhausted = false;
 
@@ -416,6 +487,13 @@ class Analyzer {
     }
     this.budget -= src.length + 16;
     if (src.includes('IFS')) this.ifsMentioned = true;
+    for (const name of ENV_ROOTS) {
+      if (!src.includes(name) || this.touched.has(name)) continue;
+      // Any mention other than `$NAME` or `${NAME}` may set it: `NAME=`, `read NAME`,
+      // `printf -v NAME`, `export NAME`, `${NAME:=x}`.
+      const bare = new RegExp(`(?<![\\w$])(?<!\\$\\{)${name}(?!\\w)|\\$\\{${name}:?=`);
+      if (bare.test(src)) this.touched.add(name);
+    }
     if (this.budget < 0) this.exhaust(this.base(src.slice(0, 200), scope, ctx));
     if (this.exhausted) return;
     let ast = this.parsed.get(src);
@@ -504,35 +582,39 @@ class Analyzer {
       case 'Select': {
         for (const w of n.wordlist ?? []) this.evalWord(w, src, scope, ctx);
         // The body runs any number of times, maybe none.
-        const body = cloneScope(scope);
-        body.vars.set(n.name.value, null);
-        body.programs.delete(n.name.value);
-        body.choices.delete(n.name.value);
-        this.compoundList(n.body, src, body, ctx);
-        this.merge(scope, [cloneScope(scope), body]);
+        this.loop(scope, (body) => {
+          this.forget(body, n.name.value);
+          this.compoundList(n.body, src, body, ctx);
+        });
         break;
       }
       case 'ArithmeticFor': {
         this.substitutionsIn([n.initialize, n.test, n.update], src, scope, ctx);
-        const body = cloneScope(scope);
-        this.compoundList(n.body, src, body, ctx);
-        this.merge(scope, [cloneScope(scope), body]);
+        this.loop(scope, (body) => this.compoundList(n.body, src, body, ctx));
         break;
       }
       case 'While': {
         this.compoundList(n.clause, src, scope, ctx);
-        const body = cloneScope(scope);
-        this.compoundList(n.body, src, body, ctx);
-        this.merge(scope, [cloneScope(scope), body]);
+        this.loop(scope, (body) => {
+          this.compoundList(n.body, src, body, ctx);
+          this.compoundList(n.clause, src, body, ctx);
+        });
         break;
       }
       case 'Case': {
         this.evalWord(n.word, src, scope, ctx);
-        const outcomes = [cloneScope(scope)]; // no pattern matched
+        // Unless an arm matches anything (`*)`), maybe no pattern matched at all.
+        const catchAll = n.items.some((item) => item.pattern.some((w) => w.text === '*'));
+        const outcomes = catchAll ? [] : [cloneScope(scope)];
+        let carried: Scope | undefined;
         for (const item of n.items) {
+          // An arm is entered by matching, or by falling through from the one before
+          // (`;&`, `;;&`), which brings that arm's changes along.
           const arm = cloneScope(scope);
+          if (carried) this.merge(arm, [cloneScope(scope), carried]);
           this.compoundList(item.body, src, arm, ctx);
           outcomes.push(arm);
+          carried = item.terminator === ';&' || item.terminator === ';;&' ? arm : undefined;
         }
         this.merge(scope, outcomes);
         break;
@@ -552,11 +634,19 @@ class Analyzer {
         }
         break;
       }
-      case 'Function':
+      case 'Function': {
         // Defining a function runs nothing. Its body is checked at each call, with the
-        // arguments and state of that call.
-        scope.functions.set(n.name.value ?? n.name.text, { body: n.body, src });
+        // arguments and state of that call. Hook functions the shell itself calls
+        // (when a command is not found, before each prompt) are checked right away.
+        const name = n.name.value ?? n.name.text;
+        scope.functions.set(name, [{ body: n.body, src }]);
+        if (HOOK_FUNCTIONS.has(name) || /^TRAP[A-Z]+$/.test(name)) {
+          const inner = cloneScope(scope);
+          delete inner.positional;
+          this.node(n.body, src, inner, { ...ctx, functions: [...(ctx.functions ?? []), name] });
+        }
         break;
+      }
       case 'Coproc':
         this.node(n.body, src, cloneScope(scope), ctx);
         break;
@@ -573,15 +663,19 @@ class Analyzer {
   private pipeline(p: Pipeline, src: string, scope: Scope, ctx: Ctx): string | undefined {
     const producers: string[] = [];
     let previous: string | undefined;
+    let last: Scope | undefined;
     for (const stage of p.commands) {
-      // Every stage of a pipeline runs in its own subshell.
-      const result = this.node(stage, src, cloneScope(scope), ctx, {
+      // In bash every stage runs in its own subshell. zsh runs the last one in the
+      // current shell, so what it changes may stay (`true | cd ~`).
+      last = cloneScope(scope);
+      const result = this.node(stage, src, last, ctx, {
         producers: [...producers],
         text: previous,
       });
       producers.push(...result.programs);
       previous = result.stdout;
     }
+    if (last && p.commands.length > 1) this.merge(scope, [cloneScope(scope), last]);
     return previous;
   }
 
@@ -594,26 +688,26 @@ class Analyzer {
   ): string | undefined {
     const text = src.slice(cmd.pos, cmd.end);
     const words: EvalWord[] = [];
-    // A command name a branch left as one of a few values: each of them is checked as
-    // the command, rather than the others becoming its arguments.
-    let otherHeads: EvalWord[][] = [];
+    // The words as written, kept to check the known values branches may have left.
+    const slots: EvalWord[][] = [];
+    const add = (w: EvalWord, expanded: EvalWord[]) => {
+      words.push(...expanded);
+      slots.push(w.candidates ? [w] : expanded);
+    };
     if (cmd.name) {
       const name = this.evalWord(cmd.name, src, scope, ctx);
-      if (name.choice && name.values.length > 1) {
-        const heads = (name.fields ?? name.values.map((v) => [v])).map((alt) =>
-          alt.map((value) => ({ ...name, value, values: [value], fields: undefined })),
-        );
-        words.push(...heads[0]!);
-        otherHeads = heads.slice(1);
-      } else words.push(...expandWord(name));
+      add(name, expandWord(name));
     }
-    const nameWords = words.length;
     const assignments: { name: string; value: EvalWord }[] = [];
     for (const arg of cmd.args) {
-      if (arg.type === 'Word') words.push(...expandWord(this.evalWord(arg, src, scope, ctx)));
-      else {
+      if (arg.type === 'Word') {
+        const w = this.evalWord(arg, src, scope, ctx);
+        add(w, expandWord(w));
+      } else {
         const value = this.evalAssignment(arg, src, scope, ctx);
-        words.push({ ...value, value: `${arg.name}=${value.value}`, text: arg.text });
+        const w = { ...value, value: `${arg.name}=${value.value}`, text: arg.text };
+        delete w.candidates;
+        add(w, [w]);
         assignments.push({ name: arg.name, value });
       }
     }
@@ -651,31 +745,88 @@ class Analyzer {
 
     const effectiveStdin: StdinInfo | undefined =
       inline !== undefined ? { producers: [], text: inline } : stdin;
+    // Words that use a variable a branch left as one of a few known values.
+    const chosen = slots.flat().filter((w) => w.candidates);
+    if (chosen.length > 0) {
+      const { combos, complete } = probes(slots);
+      if (complete && chosen.every((w) => w.exhaustive)) {
+        // Every value is known: the command is one of these, each checked in full, and
+        // what it changes is what they agree on.
+        const outcomes = combos.map((probe) => {
+          const run = cloneScope(scope);
+          const ran = this.invoke(probe, text, run, ctx, effectiveStdin, redirects);
+          this.trackWrites(ran, probe, redirects, run);
+          this.afterCommand(ran, probe, assignments, run);
+          return run;
+        });
+        this.merge(scope, outcomes);
+        return undefined;
+      }
+      // Otherwise the words are unknown below. Each combination of the known values is
+      // also checked on a copy that is then dropped: it can only add findings (`rm -rf
+      // "$X"` where X may be ~), never remove one.
+      for (const probe of combos)
+        this.invoke(probe, text, cloneScope(scope), ctx, effectiveStdin, redirects);
+    }
     const program = this.invoke(words, text, scope, ctx, effectiveStdin, redirects);
-    for (const head of otherHeads)
-      if (head.length > 0)
-        this.invoke(
-          [...head, ...words.slice(nameWords)],
-          text,
-          cloneScope(scope),
-          ctx,
-          effectiveStdin,
-          redirects,
-        );
     this.trackWrites(program, words, redirects, scope);
 
-    // Track state that later commands depend on.
+    this.afterCommand(program, words, assignments, scope);
+    const tmpdirChanged =
+      prefixAssignments.some((a) => a.name === 'TMPDIR') ||
+      scope.vars.get('TMPDIR') !== this.opts.env?.TMPDIR;
+    return this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
+  }
+
+  /**
+   * Tracks state that later commands depend on. A function of the same name runs
+   * instead of the builtin (`cd() { ...; }; cd /tmp`), unless its definition was
+   * conditional, so both outcomes are kept.
+   */
+  private afterCommand(
+    program: string,
+    words: EvalWord[],
+    assignments: { name: string; value: EvalWord }[],
+    scope: Scope,
+  ): void {
+    // `builtin cd x` and `command cd x` are cd itself, and skip any function named cd.
+    if ((program === 'builtin' || program === 'command') && words.length > 1) {
+      const rest = words.slice(1).filter((w, i) => i > 0 || !/^-[pvV]+$/.test(w.value));
+      if (rest[0] && !rest[0].value.startsWith('-'))
+        return this.trackState(programName(rest[0].value), rest, assignments, scope);
+    }
+    if (words[0] && scope.functions.has(words[0].value)) {
+      const builtin = cloneScope(scope);
+      this.trackState(program, words, assignments, builtin);
+      this.merge(scope, [cloneScope(scope), builtin]);
+    } else this.trackState(program, words, assignments, scope);
+  }
+
+  /** What builtins like cd, export, read and alias change for the commands after them. */
+  private trackState(
+    program: string,
+    words: EvalWord[],
+    assignments: { name: string; value: EvalWord }[],
+    scope: Scope,
+  ): void {
     switch (program) {
       case 'cd':
       case 'pushd': {
         const target = words.slice(1).find((w) => !w.value.startsWith('-'));
-        const from = scope.cwd !== undefined ? [scope.cwd] : (scope.cwdChoices ?? [undefined]);
-        const to = !target
+        const from = folders(scope);
+        const candidates = (target?.candidates ?? []).map((fields) => fields.join(' '));
+        const targets: (string | undefined)[] = !target
           ? [this.opts.home]
           : target.resolved
-            ? from.map((f) => resolveIn(f, target.value, this.opts.home))
-            : [undefined];
-        this.setCwd(scope, to);
+            ? [target.value]
+            : // Unknown, or one of a few known candidates.
+              [...(target.exhaustive ? [] : [undefined]), ...candidates];
+        this.setCwd(
+          scope,
+          targets.flatMap((t) =>
+            t === undefined ? [undefined] : from.map((f) => resolveIn(f, t, this.opts.home)),
+          ),
+        );
         break;
       }
       case 'popd':
@@ -711,7 +862,9 @@ class Analyzer {
             break;
           }
           if (w.value === '--' || w.value === '-') {
-            start = i + 1;
+            // A lone `-` with nothing after it keeps the arguments in bash and clears
+            // them in zsh.
+            start = w.value === '-' && i === rest.length - 1 ? -1 : i + 1;
             break;
           }
           if (/^[-+]./.test(w.value)) {
@@ -728,9 +881,6 @@ class Analyzer {
         else delete scope.positional;
         break;
       }
-      case 'getopts':
-        delete scope.positional;
-        break;
       case 'unset': {
         const functions = words.some((w) => w.value === '-f');
         for (const w of words.slice(1)) {
@@ -740,6 +890,7 @@ class Analyzer {
             scope.vars.delete(w.value);
             scope.programs.delete(w.value);
             scope.choices.delete(w.value);
+            scope.exhaustive.delete(w.value);
           }
         }
         break;
@@ -747,12 +898,24 @@ class Analyzer {
       case 'read':
       case 'mapfile':
       case 'readarray':
-        for (const w of words.slice(1))
-          if (!w.value.startsWith('-')) {
-            scope.vars.set(w.value, null);
-            scope.programs.delete(w.value);
-            scope.choices.delete(w.value);
-          }
+        for (const w of words.slice(1)) if (!w.value.startsWith('-')) this.forget(scope, w.value);
+        break;
+      case 'printf': {
+        // `printf -v NAME ...` sets NAME.
+        const v = words.findIndex((w) => w.value === '-v');
+        if (v >= 0 && words[v + 1]) this.forget(scope, words[v + 1]!.value);
+        break;
+      }
+      case 'getopts':
+        delete scope.positional;
+        if (words[2]) this.forget(scope, words[2].value);
+        break;
+      case 'break':
+      case 'continue':
+        this.loopExits.at(-1)?.push(cloneScope(scope));
+        break;
+      case 'return':
+        this.returns.at(-1)?.push(cloneScope(scope));
         break;
       case 'alias':
         for (const a of assignments) if (a.value.resolved) scope.aliases.set(a.name, a.value.value);
@@ -762,10 +925,6 @@ class Analyzer {
         }
         break;
     }
-    const tmpdirChanged =
-      prefixAssignments.some((a) => a.name === 'TMPDIR') ||
-      scope.vars.get('TMPDIR') !== this.opts.env?.TMPDIR;
-    return this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
   }
 
   /**
@@ -832,24 +991,35 @@ class Analyzer {
     // A function call runs the function's body, in this shell, with its own arguments.
     // The call is then also checked as the command it names, so a function called
     // `bash` or `eval` cannot hide what `command bash -c ...` would run.
-    const fn = scope.functions.get(head.value);
+    const defs = scope.functions.get(head.value);
     // A recursive call is already being checked; one nested too deeply is not followed.
-    if (fn && !ctx.functions?.includes(head.value) && ctx.depth >= MAX_DEPTH) {
+    if (defs && !ctx.functions?.includes(head.value) && ctx.depth >= MAX_DEPTH) {
       inv.dynamic = true;
       inv.note = `calls ${head.value}, nested too deeply to check`;
     }
-    if (fn && !ctx.functions?.includes(head.value) && ctx.depth < MAX_DEPTH) {
-      this.budget -= fn.body.end - fn.body.pos + 16;
-      if (this.budget < 0) this.exhaust(base);
+    if (defs && !ctx.functions?.includes(head.value) && ctx.depth < MAX_DEPTH) {
       const callerArgs = scope.positional;
-      if (args.every((w) => w.resolved)) scope.positional = args.map((w) => w.value);
-      else delete scope.positional;
-      this.node(fn.body, fn.src, scope, {
+      const inner: Ctx = {
         ...ctx,
         depth: ctx.depth + 1,
         via: [...ctx.via, `${head.value}()`],
         functions: [...(ctx.functions ?? []), head.value],
+      };
+      // Every definition a branch may have left is checked, each from the call's state.
+      const outcomes = defs.map((def) => {
+        this.budget -= def.body.end - def.body.pos + 16;
+        if (this.budget < 0) this.exhaust(base);
+        const run = defs.length === 1 ? scope : cloneScope(scope);
+        if (args.every((w) => w.resolved)) run.positional = args.map((w) => w.value);
+        else delete run.positional;
+        this.returns.push([]);
+        this.node(def.body, def.src, run, inner);
+        // `return` leaves the body early, with the state it had there.
+        const early = this.returns.pop()!;
+        if (early.length > 0) this.merge(run, [cloneScope(run), ...early]);
+        return run;
       });
+      if (defs.length > 1) this.merge(scope, outcomes);
       if (callerArgs) scope.positional = callerArgs;
       else delete scope.positional;
     }
@@ -914,8 +1084,12 @@ class Analyzer {
       case 'trap': {
         // `trap 'rm -rf ~' EXIT` runs its first argument as code later.
         const code = args.find((w) => !w.value.startsWith('-'));
-        if (code && args.length > 1)
+        if (code && args.length > 1) {
           this.codeString([code], text, scope, nested('trap'), undefined);
+          // It runs later (at exit, on an error), when functions defined after the
+          // trap exist too, so it is checked again at the end.
+          this.traps.push({ code, text, scope, ctx: nested('trap') });
+        }
         return program;
       }
       case 'xargs': {
@@ -1434,7 +1608,7 @@ class Analyzer {
     }
     if (!dir) return scope;
     const inner = cloneScope(scope);
-    const from = scope.cwd !== undefined ? [scope.cwd] : (scope.cwdChoices ?? [undefined]);
+    const from = folders(scope);
     this.setCwd(
       inner,
       dir.resolved ? from.map((f) => resolveIn(f, dir.value, this.opts.home)) : [undefined],
@@ -1527,7 +1701,14 @@ class Analyzer {
       return;
     }
     const abs = resolveIn(scope.cwd, file.value, this.opts.home);
-    if (!abs) return;
+    if (!abs) {
+      // A relative script in a folder belayd cannot tell: it cannot be read first.
+      if (parse) {
+        inv.dynamic = true;
+        inv.note = `runs ${file.value} in a folder that is only known at run time`;
+      }
+      return;
+    }
     inv.scripts.push(abs);
     if (scope.written.has(abs) && !scope.downloads.has(abs)) {
       inv.dynamic = true;
@@ -1766,8 +1947,15 @@ class Analyzer {
       resolved: r.resolved,
       subPrograms: r.subPrograms,
       ...(r.envOnly ? { envOnly: true } : {}),
-      ...(r.choice ? { choice: true } : {}),
     };
+    if (r.choice) {
+      const probe = this.evalParts(word.parts, src, scope, ctx, false, true);
+      if (probe.resolved && probe.complete && r.complete) result.exhaustive = true;
+      if (probe.resolved)
+        result.candidates = probe.alternatives
+          .map((v) => (word.text.startsWith('~') ? expandTilde(word.text, v, this.opts.home) : v))
+          .map((v) => v.split(FIELD_BREAK).filter(Boolean));
+    }
     if (raw.some((v) => v.includes(FIELD_BREAK)) || (r.bare && raw.every((v) => v === '')))
       result.fields = raw.map((v) => v.split(FIELD_BREAK).filter(Boolean));
     // zsh's `$=X` and `${=X}` split a variable into words where bash would not.
@@ -1789,6 +1977,8 @@ class Analyzer {
     scope: Scope,
     ctx: Ctx,
     quoted: boolean,
+    /** Expand variables that branches left as a few known values into those values. */
+    useChoices = false,
   ): {
     alternatives: string[];
     resolved: boolean;
@@ -1797,6 +1987,8 @@ class Analyzer {
     envOnly: boolean;
     /** Some alternatives are values a branch may have left, not brace expansion. */
     choice: boolean;
+    /** Every variable with candidates used here has a complete list. */
+    complete: boolean;
   } {
     let alternatives = [''];
     let resolved = true;
@@ -1806,7 +1998,9 @@ class Analyzer {
       resolved = false;
       if (!env) other = true;
     };
-    const isEnv = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !scope.vars.has(name);
+    // Only well-known roots from the user's environment that this command never sets.
+    const isEnv = (name: string) =>
+      ENV_ROOTS.has(name) && !scope.vars.has(name) && !this.touched.has(name);
     // True while the word is made only of unquoted expansions, which vanish when empty.
     let bare = true;
     const subPrograms: string[] = [];
@@ -1825,12 +2019,17 @@ class Analyzer {
       if (scope.vars.has('IFS') || this.ifsMentioned) unknown(false);
       append(options.map((v) => v.replace(/[ \t\n]+/g, FIELD_BREAK)));
     };
-    // A variable that branches left as one of a few known values: each of them.
+    // A variable that branches left as one of a few known values. Normally it is
+    // unknown like any other; with useChoices it expands to those values.
     let choice = false;
+    let complete = true;
     const choicesOf = (name: string) => {
       const list = scope.vars.get(name) === null ? scope.choices.get(name) : undefined;
-      if (list) choice = true;
-      return list;
+      if (list) {
+        choice = true;
+        if (!scope.exhaustive.has(name)) complete = false;
+      }
+      return useChoices ? list : undefined;
     };
     for (const part of parts) {
       // `"$@"` is one word per argument, and no word at all when there are none.
@@ -1852,9 +2051,17 @@ class Analyzer {
           break;
         case 'DoubleQuoted':
         case 'LocaleString': {
-          const inner = this.evalParts(part.parts as readonly WordPart[], src, scope, ctx, true);
+          const inner = this.evalParts(
+            part.parts as readonly WordPart[],
+            src,
+            scope,
+            ctx,
+            true,
+            useChoices,
+          );
           if (!inner.resolved) unknown(inner.envOnly);
           if (inner.choice) choice = true;
+          if (!inner.complete) complete = false;
           subPrograms.push(...inner.subPrograms);
           append(inner.alternatives);
           break;
@@ -1873,6 +2080,13 @@ class Analyzer {
           if (!part.prefix && !part.index && !part.operation)
             v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
           else if (
+            part.operation?.type === 'Default' &&
+            (part.operation.operator === ':=' || part.operation.operator === '=')
+          ) {
+            // `${X:=value}` may set X: from here on it is not known.
+            if (this.lookup(part.parameter, scope) === undefined)
+              this.forget(scope, part.parameter);
+          } else if (
             part.operation?.type === 'Default' &&
             (part.operation.operator === ':-' || part.operation.operator === '-')
           ) {
@@ -1944,7 +2158,15 @@ class Analyzer {
           break;
       }
     }
-    return { alternatives, resolved, subPrograms, bare, envOnly: !resolved && !other, choice };
+    return {
+      alternatives,
+      resolved,
+      subPrograms,
+      bare,
+      envOnly: !resolved && !other,
+      choice,
+      complete,
+    };
   }
 
   /**
@@ -1956,10 +2178,7 @@ class Analyzer {
     const [first, ...rest] = outcomes;
     if (!first) return;
     // Where every way leads to a known folder or value, the few candidates are kept.
-    this.setCwd(
-      scope,
-      outcomes.flatMap((o) => (o.cwd !== undefined ? [o.cwd] : (o.cwdChoices ?? [undefined]))),
-    );
+    this.setCwd(scope, outcomes.flatMap(folders));
     const names = new Set(outcomes.flatMap((o) => [...o.vars.keys()]));
     for (const name of names) {
       const value = first.vars.get(name);
@@ -1967,25 +2186,31 @@ class Analyzer {
         (o) => o.vars.has(name) === first.vars.has(name) && o.vars.get(name) === value,
       );
       scope.choices.delete(name);
-      if (agree && first.vars.has(name)) {
-        scope.vars.set(name, value!);
-        if (value === null && first.choices.has(name)) {
-          const same = rest.every(
-            (o) => o.choices.get(name)?.join('\0') === first.choices.get(name)!.join('\0'),
-          );
-          if (same) scope.choices.set(name, first.choices.get(name)!);
-        }
-      } else if (agree) scope.vars.delete(name);
+      scope.exhaustive.delete(name);
+      if (agree && typeof value === 'string') scope.vars.set(name, value);
+      else if (agree && !first.vars.has(name)) scope.vars.delete(name);
       else {
+        // Unknown from here on. The known values any path left are kept as candidates,
+        // which are only ever checked on the side (see probes): a path that leaves the
+        // variable unset or unknown cannot hide `X=~` on another.
         scope.vars.set(name, null);
-        const candidates = outcomes.map((o) => {
+        const known = outcomes.flatMap((o) => {
           const v = o.vars.get(name);
-          return typeof v === 'string' ? [v] : v === null ? o.choices.get(name) : undefined;
+          return typeof v === 'string' ? [v] : v === null ? (o.choices.get(name) ?? []) : [];
         });
-        if (candidates.every(Boolean)) {
-          const set = [...new Set(candidates.flat() as string[])];
-          if (set.length <= MAX_CHOICES) scope.choices.set(name, set);
-        }
+        const all = [...new Set(known)];
+        const set = all.slice(0, MAX_CHOICES);
+        scope.exhaustive.delete(name);
+        if (set.length > 0) scope.choices.set(name, set);
+        // Complete when every path left a known value (or a complete list of them).
+        if (
+          set.length === all.length &&
+          outcomes.every((o) => {
+            const v = o.vars.get(name);
+            return typeof v === 'string' || (v === null && o.exhaustive.has(name));
+          })
+        )
+          scope.exhaustive.add(name);
       }
     }
     // A variable that became unknown may still name one program on every path.
@@ -2011,25 +2236,72 @@ class Analyzer {
     else delete scope.positional;
     for (const o of outcomes) {
       for (const [k, v] of o.aliases) scope.aliases.set(k, v);
-      for (const [k, v] of o.functions) scope.functions.set(k, v);
+      for (const [k, defs] of o.functions) {
+        const byBody = new Map<AnyNode, FunctionDef>();
+        for (const d of [...(scope.functions.get(k) ?? []), ...defs]) byBody.set(d.body, d);
+        scope.functions.set(k, [...byBody.values()]);
+      }
     }
+  }
+
+  /**
+   * A loop body runs any number of times, maybe none. It is checked once from the state
+   * before the loop and once more from the state a first pass may leave, which catches
+   * a value one pass sets for the next (`rm -rf "$X"; X=~`).
+   */
+  private loop(scope: Scope, run: (body: Scope) => void): void {
+    this.loopExits.push([]);
+    const once = cloneScope(scope);
+    run(once);
+    const before = cloneScope(scope);
+    this.merge(scope, [before, once, ...this.loopExits.at(-1)!]);
+    const twice = cloneScope(scope);
+    run(twice);
+    // `break` and `continue` leave the body early, with the state they had there.
+    this.merge(scope, [before, once, twice, ...this.loopExits.pop()!]);
+  }
+
+  /** Checks trap code again with the functions defined by the end of the command. */
+  finishTraps(): void {
+    for (const t of this.traps.splice(0))
+      this.codeString([t.code], t.text, t.scope, t.ctx, undefined);
+  }
+
+  /** The variable now holds something belayd does not know. */
+  private forget(scope: Scope, name: string): void {
+    scope.vars.set(name, null);
+    scope.programs.delete(name);
+    scope.choices.delete(name);
+    scope.exhaustive.delete(name);
   }
 
   /** Sets the folder from its candidates: one known folder, a few, or unknown. */
   private setCwd(scope: Scope, candidates: (string | undefined)[]): void {
     const set = [...new Set(candidates)];
     delete scope.cwdChoices;
+    delete scope.cwdExhaustive;
     if (set.length === 1) scope.cwd = set[0];
     else {
+      // One of a few known folders, or unknown with some known ones to check on the side.
       scope.cwd = undefined;
-      if (set.length <= MAX_CHOICES && set.every((c) => c !== undefined))
-        scope.cwdChoices = set as string[];
+      const known = set.filter((c): c is string => c !== undefined);
+      if (known.length > 0) scope.cwdChoices = known.slice(0, MAX_CHOICES);
+      if (known.length === set.length && known.length <= MAX_CHOICES) scope.cwdExhaustive = true;
     }
   }
 
   private assign(scope: Scope, name: string, value: EvalWord): void {
     scope.vars.set(name, value.resolved ? value.value : null);
     scope.choices.delete(name);
+    scope.exhaustive.delete(name);
+    // `Y=$X` keeps X's candidates: no word splitting happens in an assignment.
+    if (!value.resolved && value.candidates) {
+      scope.choices.set(
+        name,
+        value.candidates.map((fields) => fields.join(' ')),
+      );
+      if (value.exhaustive) scope.exhaustive.add(name);
+    }
     const program = value.resolved ? undefined : envProgram(value);
     if (program) scope.programs.set(name, program);
     else scope.programs.delete(name);
@@ -2086,7 +2358,9 @@ class Analyzer {
       program: '',
       text,
       cwd: scope.cwd,
-      ...(scope.cwd === undefined && scope.cwdChoices ? { cwdChoices: scope.cwdChoices } : {}),
+      ...(scope.cwd === undefined && scope.cwdChoices
+        ? { cwdChoices: scope.cwdChoices, cwdExhaustive: scope.cwdExhaustive === true }
+        : {}),
       dynamic: false,
       unresolved: false,
       redirects: [],
@@ -2144,7 +2418,9 @@ function cloneScope(scope: Scope): Scope {
     functions: new Map(scope.functions),
     programs: new Map(scope.programs),
     choices: new Map(scope.choices),
+    exhaustive: new Set(scope.exhaustive),
     ...(scope.cwdChoices ? { cwdChoices: scope.cwdChoices } : {}),
+    ...(scope.cwdExhaustive ? { cwdExhaustive: true } : {}),
     ...(scope.positional ? { positional: scope.positional } : {}),
   };
 }
@@ -2476,5 +2752,32 @@ function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
 function envProgram(word: EvalWord): string | undefined {
   if (!word.envOnly) return undefined;
   const name = programName(word.value);
-  return name && !/[$`{}]/.test(name) ? name : undefined;
+  // A glob like `r?` could match another program.
+  return name && !/[$`{}*?[\]]/.test(name) ? name : undefined;
+}
+
+/**
+ * Concrete word lists for each combination of candidate values, up to MAX_CHOICES of
+ * them. A word without candidates is used as it is.
+ */
+function probes(slots: EvalWord[][]): { combos: EvalWord[][]; complete: boolean } {
+  let combos: EvalWord[][] = [[]];
+  let complete = true;
+  for (const slot of slots) {
+    const word = slot.length === 1 ? slot[0]! : undefined;
+    const options: EvalWord[][] = word?.candidates
+      ? word.candidates.map((fields) => fields.map(literal))
+      : [slot];
+    const next: EvalWord[][] = [];
+    for (const combo of combos) for (const option of options) next.push([...combo, ...option]);
+    if (next.length > MAX_CHOICES) complete = false;
+    combos = next.slice(0, MAX_CHOICES);
+  }
+  return { combos: combos.filter((c) => c.length > 0), complete };
+}
+
+/** The folders a scope may be in; undefined stands for one belayd cannot tell. */
+function folders(scope: Scope): (string | undefined)[] {
+  if (scope.cwd !== undefined) return [scope.cwd];
+  return [...(scope.cwdChoices ?? []), ...(scope.cwdExhaustive ? [] : [undefined])];
 }

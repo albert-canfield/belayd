@@ -31,12 +31,8 @@ rules:
     decision: allow
     reason: Undo can restore discarded work.
 
-  - id: ask-delete-unknown-paths
-    match:
-      command: [rm, rmdir, shred, srm, unlink, rimraf, mv]
-      unresolved: true
-    decision: allow
-    reason: Undo can restore deleted files in the project.
+  # Deletes of paths only known at run time are still asked about: such a path can
+  # lie outside the project, where undo cannot reach.
 
   # Things undo cannot fix are asked about instead of blocked.
   - id: no-force-push

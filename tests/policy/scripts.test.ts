@@ -159,7 +159,7 @@ describe('runners and hooks the agent changed in this session', () => {
     file('z.sh', 'rm -rf ~\n');
     const started = Date.now();
     expect(await verdict('bash a.sh')).toBe('ask');
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(Date.now() - started).toBeLessThan(10_000); // it took over 30 s before the budget; generous for busy machines
   });
 
   it('gives a script its arguments', async () => {

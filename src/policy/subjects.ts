@@ -343,7 +343,11 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
   const resolve = (p: string): string[] => {
     if (SPECIAL_FILES.test(p)) return [];
     const out: string[] = [];
-    // When a branch left the folder as one of a few, the path is each of them.
+    // When the folder is one of a few known ones, a relative path is checked in each.
+    // When it is unknown, the path is unknown too, and any known candidates are checked
+    // as well so that a dangerous one is still caught.
+    const relative = !p.startsWith('/') && !p.startsWith('~');
+    if (inv.cwd === undefined && relative && !inv.cwdExhaustive) unresolved = true;
     const folders = inv.cwd !== undefined ? [inv.cwd] : (inv.cwdChoices ?? [undefined]);
     for (const folder of folders) {
       const full = inv.remote && !p.startsWith('/') ? undefined : resolveIn(folder, p, ctx.home);
@@ -498,9 +502,14 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     outbound,
     codeFrom: inv.codeFrom,
     runs: inv.scripts.flatMap(bothForms),
-    drivenBy: drivers(program, positionals, raw, inv.cwd, ctx.workspace).flatMap((d) =>
-      d.endsWith('/') ? bothForms(d.slice(0, -1)).map((x) => `${x}/`) : bothForms(d),
-    ),
+    drivenBy: (inv.cwd !== undefined
+      ? [inv.cwd]
+      : [...(inv.cwdChoices ?? []), ...(inv.cwdExhaustive ? [] : [ctx.workspace])]
+    )
+      .flatMap((cwd) => drivers(program, positionals, raw, cwd, ctx.workspace))
+      .flatMap((d) =>
+        d.endsWith('/') ? bothForms(d.slice(0, -1)).map((x) => `${x}/`) : bothForms(d),
+      ),
     dynamic: inv.dynamic,
     unresolved,
     inlineCode: inv.inlineCode,
