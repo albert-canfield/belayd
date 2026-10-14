@@ -1,6 +1,7 @@
 import { record, sessionKey, summarizeInput } from '../../audit/record.js';
 import type { HookResult } from '../../hook/types.js';
 import { actionLabel } from '../../policy/label.js';
+import { capture } from '../../snapshots/capture.js';
 import { evaluate } from '../../policy/engine.js';
 import { loadPolicy } from '../../policy/load.js';
 import type { Action, ActionContext, Decision } from '../../policy/types.js';
@@ -56,6 +57,7 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
   const session = sessionKey(host, input.session_id);
 
   if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+    const snapshot = await afterSnapshot(stateDir, input, { cwd, workspace, home, host });
     await record(stateDir, {
       session,
       phase: 'post',
@@ -66,6 +68,7 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       tool: input.tool_name,
       toolUseId: input.tool_use_id,
       outcome: event === 'PostToolUseFailure' ? 'failed' : 'ran',
+      snapshot,
     });
     return { stdout: '', exitCode: 0 };
   }
@@ -74,7 +77,13 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
   const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
   const audit = (
     told: string,
-    extra: { verdict?: string; reason?: string; ruleId?: string; answeredBy?: string },
+    extra: {
+      verdict?: string;
+      reason?: string;
+      ruleId?: string;
+      answeredBy?: string;
+      snapshot?: string;
+    },
   ) =>
     record(stateDir, {
       session,
@@ -111,7 +120,9 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
     };
     if (decision.verdict !== 'ask') {
-      await audit(decision.verdict, facts);
+      const snapshot =
+        decision.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
+      await audit(decision.verdict, { ...facts, ...(snapshot ? { snapshot } : {}) });
       return render(decision);
     }
 
@@ -132,9 +143,12 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       canAskNatively: host === 'claude-code' && deps.env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
       binPath: deps.binPath ?? process.argv[1] ?? '',
     });
+    const snapshot =
+      resolution.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
     await audit(resolution.verdict, {
       ...facts,
       ...(resolution.answeredBy ? { answeredBy: resolution.answeredBy } : {}),
+      ...(snapshot ? { snapshot } : {}),
     });
     return output(resolution.verdict, resolution.reason);
   } catch (err) {
@@ -144,6 +158,26 @@ export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookRes
       `belayd hit an error and is blocking this action to be safe: ${message}. ` +
         'Ask the user to run `belayd doctor`.',
     );
+  }
+}
+
+/** After a tool ran, capture the same scope again so undo knows what the step changed. */
+async function afterSnapshot(
+  stateDir: string,
+  input: ClaudeHookInput,
+  where: { cwd: string; workspace: string; home: string; host: Host },
+): Promise<string | undefined> {
+  try {
+    const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, where.cwd);
+    const policy = await loadPolicy({ workspace: where.workspace, belaydHome: stateDir });
+    return capture(stateDir, policy, action, {
+      agent: where.host,
+      cwd: where.cwd,
+      workspace: where.workspace,
+      home: where.home,
+    });
+  } catch {
+    return undefined;
   }
 }
 
