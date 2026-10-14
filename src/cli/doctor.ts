@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import pc from 'picocolors';
 import { listPending } from '../approval/store.js';
+import { codexDetected, codexHome } from '../integrations/codex/install.js';
 import { AuditLog } from '../audit/db.js';
 import { readUiState } from '../approval/ui-state.js';
 import {
@@ -89,6 +90,42 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     }
   }
   if (installed === 0) line('warn', 'No belayd hook found for Claude Code', 'Run: belayd init');
+
+  if (codexDetected()) {
+    let codexInstalled = 0;
+    for (const file of [
+      path.join(workspace, '.codex', 'hooks.json'),
+      path.join(codexHome(), 'hooks.json'),
+    ]) {
+      if (!fs.existsSync(file)) continue;
+      let handler;
+      try {
+        handler = findInstalledHandler(readSettings(file));
+      } catch (err) {
+        line('fail', `Cannot read ${tilde(file)}`, (err as Error).message);
+        continue;
+      }
+      if (!handler) continue;
+      codexInstalled++;
+      const missing = pathsInShellCommand(handler.command).filter((p) => !fs.existsSync(p));
+      if (missing.length > 0) {
+        line(
+          'fail',
+          `Codex hook in ${tilde(file)} points to files that no longer exist`,
+          `${missing.join(', ')}. Run belayd init --agent codex again.`,
+        );
+      } else {
+        line(
+          'ok',
+          `Codex hook installed in ${tilde(file)}`,
+          'Codex skips new or changed hooks until you trust them: run /hooks in Codex once.',
+        );
+      }
+    }
+    if (codexInstalled === 0) {
+      line('warn', 'Codex found, but no belayd hook for it', 'Run: belayd init --agent codex');
+    }
+  }
 
   if (AuditLog.exists(state)) {
     try {
