@@ -21,6 +21,15 @@ export interface ApproveOptions {
 export async function approve(id: string | undefined, opts: ApproveOptions): Promise<number> {
   const home = belaydHome();
 
+  // Approvals are for people. Claude Code marks every process it starts for a tool
+  // call with CLAUDE_CODE_CHILD_SESSION=1, so an agent cannot answer its own request.
+  if ((id || !opts.list) && !opts.json && insideAgent(process.env)) {
+    console.error(
+      'belayd approve must be run by a person, not from inside an agent session. Open a terminal and run it there.',
+    );
+    return 77;
+  }
+
   if (id) {
     if (opts.allow === opts.deny) {
       console.error(
@@ -131,4 +140,13 @@ function project(p: string): string {
 function oneLine(s: string): string {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > 70 ? `${t.slice(0, 67)}...` : t;
+}
+
+/** True when this process was started by an agent's tool call rather than by a person. */
+export function insideAgent(env: NodeJS.ProcessEnv): boolean {
+  return (
+    env.CLAUDE_CODE_CHILD_SESSION === '1' ||
+    env.CODEX_SANDBOX !== undefined ||
+    env.CODEX_SANDBOX_NETWORK_DISABLED === '1'
+  );
 }

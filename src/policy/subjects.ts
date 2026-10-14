@@ -224,8 +224,18 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
 }
 
 function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
-  const program = inv.program || undefined;
-  const raw = inv.argv.slice(1);
+  let program = inv.program || undefined;
+  let raw = inv.argv.slice(1);
+  // `node .../belayd/dist/bin.js approve` is belayd too, so rules about belayd apply.
+  if (
+    program &&
+    JS_RUNTIMES.has(program) &&
+    raw[0] &&
+    BELAYD_BIN.test(raw[0].split('\\').join('/'))
+  ) {
+    program = 'belayd';
+    raw = raw.slice(1);
+  }
   const args: string[] = [];
   for (const a of raw) {
     args.push(a);
@@ -447,6 +457,9 @@ function safeJson(value: unknown): string {
     return String(value);
   }
 }
+
+const JS_RUNTIMES = new Set(['node', 'nodejs', 'bun']);
+const BELAYD_BIN = /(^|\/)(belayd|leashd)\/dist\/bin\.js$/;
 
 const SCRIPT_RUNNERS = new Set(['run', 'run-script', 'test', 't', 'start', 'exec', 'x', 'dlx']);
 const GIT_HOOKED = new Set([

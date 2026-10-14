@@ -78,3 +78,17 @@ describe('approvals in a headless session (built binary)', () => {
     expect(JSON.parse(belayd(sb, ['approve', '--json']).stdout)).toEqual([]);
   });
 });
+
+describe('approvals are for people', () => {
+  it('belayd approve refuses to run inside an agent tool call', async () => {
+    const hook = runHook('sudo ls', 15);
+    const req = await waitForRequest();
+    const r = belayd(sb, ['approve', req.id, '--allow'], {
+      env: { CLAUDE_CODE_CHILD_SESSION: '1' },
+    });
+    expect(r.status).toBe(77);
+    expect(r.stderr).toMatch(/must be run by a person/);
+    belayd(sb, ['approve', req.id, '--deny']);
+    expect(decision((await hook).stdout)).toBe('deny');
+  });
+});

@@ -303,3 +303,17 @@
     strict: deny,
   }
 - { mcp: { server: github, tool: search_code, args: { q: 'useEffect' } }, balanced: pass }
+
+# --- An agent must not answer its own approval request ------------------------
+- { cmd: 'belayd approve mv7b-3e85 --allow', balanced: deny }
+- { cmd: 'npx belayd approve mv7b-3e85 --allow', balanced: deny }
+- {
+    cmd: 'node /usr/local/lib/node_modules/belayd/dist/bin.js approve mv7b-3e85 --allow',
+    balanced: deny,
+  }
+- { cmd: 'belayd uninstall --yes', balanced: deny }
+- { cmd: 'cat ~/.belayd/ui-token', balanced: deny }
+- { cmd: 'echo "{}" > ~/.belayd/approvals/decided/mv7b-3e85.json', balanced: deny }
+- { cmd: 'curl -X POST http://127.0.0.1:23529/api/decide -d "{}"', balanced: deny }
+- { cmd: 'belayd check "rm -rf ~"', balanced: pass }
+- { cmd: 'belayd replay', balanced: pass }

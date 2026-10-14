@@ -67,6 +67,36 @@ rules:
     decision: deny
     reason: Writes straight to a disk device, which destroys whatever is on it.
 
+  # An agent runs commands as you, so it could try to answer its own approval
+  # request or switch belayd off. Only a person does those things.
+  - id: no-self-approval
+    final: true
+    match:
+      command:
+        - belayd approve
+        - belayd ui
+        - belayd uninstall
+        - belayd init
+        - belayd mcp wrap
+        - belayd mcp unwrap
+    decision: deny
+    reason: Only a person can approve requests or change how belayd is set up. Ask the user to do it.
+
+  - id: no-approval-tampering
+    final: true
+    match:
+      path: ['{belayd_home}/ui-token', '{belayd_home}/approvals/**', '{belayd_home}/ui.json']
+    decision: deny
+    reason: These files belong to belayd's approval system. Ask the user to approve the request themselves.
+
+  - id: no-approval-api
+    final: true
+    match:
+      domain: [127.0.0.1, localhost, '[::1]', 0.0.0.0]
+      args: { any: ['*/api/decide*', '*/api/state*', '*:23529*'] }
+    decision: deny
+    reason: Only a person can answer belayd's approval requests.
+
   - id: no-pipe-to-shell
     match:
       codeFrom:
