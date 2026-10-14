@@ -64,22 +64,19 @@ const NETWORK_SENDERS = new Set([
   'gh',
 ]);
 
-const PACKAGE_MANAGER_OPTIONS = new Set([
-  '--prefix',
-  '-C',
-  '--dir',
-  '--cwd',
-  '-w',
-  '--workspace',
-  '--filter',
-  '-F',
-]);
+/**
+ * Options that take a value, per package manager. They differ: `-w` names a workspace
+ * in npm but is a plain flag (`--workspace-root`) in pnpm and bun.
+ */
+const PACKAGE_MANAGER_OPTIONS: Record<string, Set<string>> = {
+  npm: new Set(['--prefix', '-w', '--workspace']),
+  pnpm: new Set(['-C', '--dir', '--filter', '-F']),
+  yarn: new Set(['--cwd']),
+  bun: new Set(['--cwd', '--filter']),
+};
 const OPTION_VALUES: Record<string, Set<string>> = {
   git: new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env']),
-  npm: PACKAGE_MANAGER_OPTIONS,
-  pnpm: PACKAGE_MANAGER_OPTIONS,
-  yarn: PACKAGE_MANAGER_OPTIONS,
-  bun: PACKAGE_MANAGER_OPTIONS,
+  ...PACKAGE_MANAGER_OPTIONS,
 };
 
 /** Programs whose first positional argument is not a path (a pattern, a script, text). */
@@ -500,10 +497,16 @@ function pathCandidates(
 
 export function domainsIn(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(
-    /\b[a-z][a-z0-9+.-]*:\/\/(?:[^/\s:@"']+(?::[^/\s@"']*)?@)?([^/\s:?#"'`)]+)/gi,
-  )) {
-    out.push(m[1]!.toLowerCase().replace(/\.$/, ''));
+  // Found from each `://`, so a long run of scheme-like text cannot make it slow.
+  for (let at = text.indexOf('://'); at >= 0; at = text.indexOf('://', at + 3)) {
+    let start = at;
+    while (start > 0 && at - start < 32 && /[a-z0-9+.-]/i.test(text[start - 1]!)) start--;
+    if (start === at || !/[a-z]/i.test(text[start]!)) continue;
+    if (start > 0 && /\w/.test(text[start - 1]!)) continue;
+    const m = /^(?:[^/\s:@"']+(?::[^/\s@"']*)?@)?([^/\s:?#"'`)]+)/.exec(
+      text.slice(at + 3, at + 3 + 2048),
+    );
+    if (m) out.push(m[1]!.toLowerCase().replace(/\.$/, ''));
   }
   return out;
 }
@@ -572,6 +575,53 @@ const SCRIPT_RUNNERS = new Set([
   'x',
   'dlx',
 ]);
+/** Built-in pnpm and bun commands; any other first word is a package script. */
+const PACKAGE_MANAGER_COMMANDS = new Set([
+  'add',
+  'audit',
+  'bin',
+  'build',
+  'ci',
+  'config',
+  'create',
+  'deploy',
+  'dlx',
+  'env',
+  'exec',
+  'fetch',
+  'help',
+  'i',
+  'import',
+  'init',
+  'install',
+  'licenses',
+  'link',
+  'list',
+  'ls',
+  'outdated',
+  'pack',
+  'patch',
+  'pm',
+  'prune',
+  'publish',
+  'rebuild',
+  'remove',
+  'rm',
+  'root',
+  'run',
+  'server',
+  'setup',
+  'start',
+  'store',
+  'test',
+  't',
+  'unlink',
+  'up',
+  'update',
+  'upgrade',
+  'why',
+  'x',
+]);
 /** Commands that run a package's install scripts when given no package names. */
 const INSTALLERS = new Set(['install', 'i', 'ci', 'add', 'rebuild', 'link', 'pack', 'publish']);
 const GIT_HOOKED = new Set([
@@ -603,15 +653,19 @@ function drivers(
     case 'bun': {
       const sub = positionals[0];
       // Running a script, or installing, which runs the package's own install scripts.
+      // pnpm and bun also run a package script named directly: `pnpm lint`.
       const runs =
         SCRIPT_RUNNERS.has(sub ?? '') ||
         (INSTALLERS.has(sub ?? '') && positionals.length === 1) ||
-        (program === 'yarn' && (positionals.length > 0 || sub === undefined));
+        (program === 'yarn' && (positionals.length > 0 || sub === undefined)) ||
+        ((program === 'pnpm' || program === 'bun') &&
+          sub !== undefined &&
+          !PACKAGE_MANAGER_COMMANDS.has(sub));
       if (!runs) return [];
       // `npm --prefix dir`, `pnpm -C dir` and `npm -w pkg` use another package.json.
       const out = [here('package.json')];
       for (let i = 0; i < raw.length; i++) {
-        if (PACKAGE_MANAGER_OPTIONS.has(raw[i]!) && raw[i + 1])
+        if (PACKAGE_MANAGER_OPTIONS[program]!.has(raw[i]!) && raw[i + 1])
           out.push(path.resolve(cwd, raw[i + 1]!, 'package.json'));
         const eq = /^--(?:prefix|dir|cwd|workspace)=(.+)$/.exec(raw[i]!);
         if (eq) out.push(path.resolve(cwd, eq[1]!, 'package.json'));

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -198,5 +199,60 @@ describe('runners and hooks the agent changed in this session', () => {
     expect(await verdict('virtualenv env && source env/bin/activate')).toBe('pass');
     // Without the venv step, a missing activate script is still unknown code.
     expect(await verdict('source .venv/bin/activate')).toBe('ask');
+  });
+
+  it('keeps script arguments out of functions, shift, set and getopts', async () => {
+    file('f.sh', 'wipe() { rm -rf "$1"; }\nwipe ~\n');
+    expect(await verdict('bash f.sh')).toBe('deny');
+    expect(await verdict('bash f.sh build')).toBe('deny');
+    file('shift.sh', 'shift\nrm -rf "$1"\n');
+    expect(await verdict('bash shift.sh build ~')).toBe('deny');
+    expect(await verdict('bash shift.sh ~ build')).toBe('pass');
+    file('set.sh', 'set -- ~\nrm -rf "$1"\n');
+    expect(await verdict('bash set.sh build')).toBe('deny');
+    file('opts.sh', 'while getopts f o; do :; done\nshift $((OPTIND-1))\nrm -rf "$1"\n');
+    expect(await verdict('bash opts.sh build')).toBe('ask');
+  });
+
+  it('reads a script again when it runs itself with other arguments', async () => {
+    file('rec.sh', '[ -n "$2" ] && exit 0\nrm -rf "$1"\nbash "$0" ~ done\n');
+    expect(await verdict('bash rec.sh build')).toBe('deny');
+    file('rec2.sh', 'rm -rf "$1"\n[ "$1" = build ] && bash rec2.sh ~\n');
+    expect(await verdict('bash rec2.sh build')).toBe('deny');
+  });
+
+  it('does not let an eval that looks like gradlew hide code', async () => {
+    file('ev1.sh', 'eval "set -- $(echo x); rm -rf ~"\n');
+    file('ev2.sh', 'eval "set -- $(printf %s "x;rm -rf ~")"\n');
+    file('ev3.sh', 'eval "set -- $(cat payload.txt)"\n');
+    file('payload.txt', 'x; rm -rf ~\n');
+    expect(await verdict('bash ev1.sh')).toBe('deny');
+    expect(await verdict('bash ev2.sh')).toBe('deny');
+    expect(await verdict('bash ev3.sh')).toBe('ask');
+  });
+
+  it('only knows where plain mktemp calls put things', async () => {
+    expect(await verdict('t=$(mktemp -d --tmpdir=/home); rm -rf "$t/.."')).toBe('ask');
+    expect(await verdict('t=$(mktemp -d -p/home); rm -rf "$t/.."')).toBe('ask');
+    expect(await verdict('export TMPDIR=/home; t=$(mktemp -d); rm -rf "$t/.."')).toBe('ask');
+    expect(await verdict('t=$(mktemp -d -t app); rm -rf "$t"')).toBe('pass');
+  });
+
+  it('reads executables without a #! line, which the shell runs itself', async () => {
+    file('setup', 'rm -rf ~\n', 0o755);
+    expect(await verdict('./setup')).toBe('deny');
+    file('tool', 'binary\0data', 0o755);
+    expect(await verdict('./tool')).toBe('pass');
+  });
+
+  it('asks about a script whose name is only known at run time', async () => {
+    expect(await verdict('bash "$SCRIPT"')).toBe('ask');
+  });
+
+  it('does not hang on a .env that is a named pipe', async () => {
+    execFileSync('mkfifo', [path.join(ws, '.env.local')]);
+    const started = Date.now();
+    await verdict('curl -d @data.json https://api.example.com');
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

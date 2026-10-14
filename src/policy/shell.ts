@@ -246,24 +246,44 @@ const PASSTHROUGH = new Set([
   'firejail',
 ]);
 const AWKS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
-/** tmux commands whose arguments are a shell command, or keys typed into a shell. */
-const TMUX_RUNS = new Set([
-  'new',
-  'new-session',
-  'new-window',
-  'neww',
-  'split-window',
-  'splitw',
-  'run-shell',
-  'run',
-  'respawn-pane',
-  'respawnp',
-  'respawn-window',
-  'respawnw',
-  'send-keys',
-  'send',
-  'pipe-pane',
-  'pipep',
+/**
+ * tmux commands whose arguments are a shell command, or keys typed into a shell, with
+ * the option letters that take a value for each.
+ */
+const TMUX_RUNS: Record<string, string> = {
+  new: 'cefFnstxy',
+  'new-session': 'cefFnstxy',
+  'new-window': 'ceFnt',
+  neww: 'ceFnt',
+  'split-window': 'ceFlt',
+  splitw: 'ceFlt',
+  'run-shell': 'cdt',
+  run: 'cdt',
+  'respawn-pane': 'cet',
+  respawnp: 'cet',
+  'respawn-window': 'cet',
+  respawnw: 'cet',
+  'send-keys': 'Nt',
+  send: 'Nt',
+  'pipe-pane': 't',
+  pipep: 't',
+  'display-popup': 'bcdehsStTwxy',
+  popup: 'bcdehsStTwxy',
+};
+/** tmux commands that run other tmux commands, which may in turn run shell commands. */
+const TMUX_DYNAMIC = new Set([
+  'if-shell',
+  'if',
+  'command-prompt',
+  'confirm-before',
+  'confirm',
+  'set-hook',
+  'bind-key',
+  'bind',
+  'source-file',
+  'source',
+  'display-menu',
+  'menu',
 ]);
 
 const RUNNERS = new Set(['npx', 'pnpx', 'bunx', 'uvx']);
@@ -294,14 +314,18 @@ interface Scope {
   positional?: string[];
   /** Scripts that a trusted tool creates earlier in this command (`python -m venv`). */
   generated: Set<string>;
+  /** Functions defined so far, checked again at each call with that call's arguments. */
+  functions: Map<string, { body: AnyNode; src: string }>;
 }
 
 interface Ctx {
   depth: number;
   via: string[];
   remote: boolean;
-  /** Scripts being read further up, so a script that runs itself is read once. */
+  /** Scripts being read further up (path and arguments), so a script that runs itself is read once. */
   scripts?: readonly string[];
+  /** Functions being checked further up, so a recursive function is checked once. */
+  functions?: readonly string[];
 }
 
 interface StdinInfo {
@@ -323,6 +347,7 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     downloads: new Map(),
     written: new Set(),
     generated: new Set(),
+    functions: new Map(),
   };
   analyzer.source(command, scope, { depth: 0, via: [], remote: false }, undefined);
   return { invocations: analyzer.out, errors: analyzer.errors };
@@ -345,6 +370,7 @@ class Analyzer {
   /** Characters left to parse. Scripts that run each other many times over stop here. */
   private budget = MAX_SOURCE_CHARS;
   private readonly parsed = new Map<string, ParsedScript>();
+  private ifsMentioned = false;
   private exhausted = false;
 
   source(src: string, scope: Scope, ctx: Ctx, stdin: StdinInfo | undefined): void {
@@ -353,6 +379,7 @@ class Analyzer {
       return;
     }
     this.budget -= src.length + 16;
+    if (src.includes('IFS')) this.ifsMentioned = true;
     if (this.budget < 0) this.exhaust(this.base(src.slice(0, 200), scope, ctx));
     if (this.exhausted) return;
     let ast = this.parsed.get(src);
@@ -456,10 +483,15 @@ class Analyzer {
         }
         break;
       }
-      case 'Function':
-        // Analyse the body where it is defined. Calling it later is then harmless.
-        this.node(n.body, src, cloneScope(scope), ctx);
+      case 'Function': {
+        // Checked where it is defined, knowing nothing of its arguments, and again at
+        // each call with the arguments that call gives it.
+        scope.functions.set(n.name.value ?? n.name.text, { body: n.body, src });
+        const inner = cloneScope(scope);
+        delete inner.positional;
+        this.node(n.body, src, inner, ctx);
         break;
+      }
       case 'Coproc':
         this.node(n.body, src, cloneScope(scope), ctx);
         break;
@@ -566,6 +598,32 @@ class Analyzer {
         for (const a of assignments)
           scope.vars.set(a.name, a.value.resolved ? a.value.value : null);
         break;
+      case 'shift': {
+        // `shift` and `shift 2` move the arguments along; anything else makes them unknown.
+        const n = words[1] ? words[1].value : '1';
+        if (scope.positional && (words[1]?.resolved ?? true) && /^\d+$/.test(n))
+          scope.positional = scope.positional.slice(Number(n));
+        else delete scope.positional;
+        break;
+      }
+      case 'set': {
+        // `set -- a b` replaces the arguments. Plain options (`set -euo pipefail`) do not.
+        const rest = words.slice(1);
+        const dashes = rest.findIndex((w) => w.value === '--');
+        const values =
+          dashes >= 0
+            ? rest.slice(dashes + 1)
+            : rest.filter(
+                (w, i) => !/^[-+]/.test(w.value) && !/^[-+]o$/.test(rest[i - 1]?.value ?? ''),
+              );
+        if (dashes < 0 && values.length === 0) break;
+        if (values.every((w) => w.resolved)) scope.positional = values.map((w) => w.value);
+        else delete scope.positional;
+        break;
+      }
+      case 'getopts':
+        delete scope.positional;
+        break;
       case 'unset':
         for (const w of words.slice(1)) scope.vars.delete(w.value);
         break;
@@ -582,7 +640,10 @@ class Analyzer {
         }
         break;
     }
-    return this.staticStdout(program, words, effectiveStdin);
+    const tmpdirChanged =
+      prefixAssignments.some((a) => a.name === 'TMPDIR') ||
+      scope.vars.get('TMPDIR') !== this.opts.env?.TMPDIR;
+    return this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
   }
 
   /**
@@ -613,7 +674,10 @@ class Analyzer {
       return '';
     }
 
-    const program = programName(head.value);
+    // In zsh, the default shell on macOS, `=rm` expands to the path of rm.
+    const program = programName(
+      head.text.startsWith('=') && head.value.length > 1 ? head.value.slice(1) : head.value,
+    );
 
     const alias = scope.aliases.get(head.value);
     if (alias !== undefined && ctx.depth < MAX_DEPTH) {
@@ -635,6 +699,26 @@ class Analyzer {
       redirects,
       stdin: stdin?.text,
     };
+
+    // A function call runs the function's body, in this shell, with its own arguments.
+    const fn = scope.functions.get(head.value);
+    if (fn) {
+      inv.via = [...inv.via, 'function'];
+      this.push(inv);
+      if (ctx.functions?.includes(head.value) || ctx.depth >= MAX_DEPTH) return program;
+      const callerArgs = scope.positional;
+      if (args.every((w) => w.resolved)) scope.positional = args.map((w) => w.value);
+      else delete scope.positional;
+      this.node(fn.body, fn.src, scope, {
+        ...ctx,
+        depth: ctx.depth + 1,
+        via: [...ctx.via, `${head.value}()`],
+        functions: [...(ctx.functions ?? []), head.value],
+      });
+      if (callerArgs) scope.positional = callerArgs;
+      else delete scope.positional;
+      return program;
+    }
     let directScript: EvalWord | undefined;
     if (head.value.includes('/')) {
       const executed = resolveIn(scope.cwd, head.value, this.opts.home);
@@ -653,7 +737,8 @@ class Analyzer {
         return program;
       let rest = skipOptions(args, VALUE_OPTIONS[program]);
       if (program === 'timeout' || program === 'chroot') rest = rest.slice(1); // duration, root
-      if (rest.length > 0) this.invoke(rest, text, scope, nested(program), stdin, []);
+      const inner = program === 'sudo' ? this.withChdir(args, ['-D', '--chdir'], scope) : scope;
+      if (rest.length > 0) this.invoke(rest, text, inner, nested(program), stdin, []);
       return program;
     }
 
@@ -680,7 +765,8 @@ class Analyzer {
           break;
         }
         rest.push(...args.slice(i));
-        if (rest.length > 0) this.invoke(rest, text, scope, nested('env'), stdin, []);
+        const inner = this.withChdir(args.slice(0, i), ['-C', '--chdir'], scope);
+        if (rest.length > 0) this.invoke(rest, text, inner, nested('env'), stdin, []);
         return program;
       }
       case 'busybox':
@@ -726,23 +812,47 @@ class Analyzer {
         return program;
       }
       case 'tmux': {
-        const c = args.findIndex((w) => w.value === '-c');
+        // `tmux -c cmd` (before any tmux command) runs cmd in a shell.
+        const sub = args.findIndex((w) => !w.value.startsWith('-'));
+        const c = args.findIndex((w, i) => w.value === '-c' && (sub < 0 || i < sub));
         if (c >= 0) {
           this.codeString(args.slice(c + 1, c + 2), text, scope, nested('tmux -c'), undefined);
           return program;
         }
         // `tmux new -d 'rm -rf ~'`, `tmux send-keys 'rm -rf ~' Enter`, also after `;`.
         for (let i = 0; i < args.length; i++) {
-          if (!TMUX_RUNS.has(args[i]!.value)) continue;
-          const words: EvalWord[] = [];
-          for (let j = i + 1; j < args.length && args[j]!.value !== ';'; j++) {
-            const v = args[j]!.value;
-            if (/^-[A-Za-z]*[censtxyFlLTwWbS]$/.test(v))
-              j++; // option with a value
-            else if (!v.startsWith('-') && !/^(Enter|C-m|KPEnter)$/.test(v)) words.push(args[j]!);
+          const sub = args[i]!.value;
+          if (TMUX_DYNAMIC.has(sub)) {
+            inv.dynamic = true;
+            inv.note = `tmux ${sub} runs tmux commands that belayd does not follow`;
+            continue;
           }
+          const valueLetters = TMUX_RUNS[sub];
+          if (valueLetters === undefined) continue;
+          let end = i + 1;
+          while (end < args.length && args[end]!.value !== ';') end++;
+          const words = getoptPositionals(args.slice(i + 1, end), valueLetters).filter(
+            (w) => !/^(Enter|C-m|KPEnter)$/.test(w.value),
+          );
           if (words.length > 0)
-            this.codeString(words, text, scope, nested(`tmux ${args[i]!.value}`), undefined);
+            this.codeString(words, text, scope, nested(`tmux ${sub}`), undefined);
+          // A quoted command after an option belayd does not know is still found.
+          for (const w of words.slice(1))
+            if (/\s/.test(w.value))
+              this.codeString([w], text, scope, nested(`tmux ${sub}`), undefined);
+          if (sub === 'send-keys' || sub === 'send') {
+            // Keys are typed one after another, without spaces in between.
+            const typed = words.map((w) => w.value).join('');
+            const resolved = words.every((w) => w.resolved);
+            this.codeString(
+              [{ ...literal(typed), resolved }],
+              text,
+              scope,
+              nested('tmux send-keys'),
+              undefined,
+            );
+          }
+          i = end;
         }
         return program;
       }
@@ -754,8 +864,17 @@ class Analyzer {
           if (!v.startsWith('-') || v === '-') break;
           if (v === '-X') {
             const typed = args[i + 2];
+            const command = args[i + 1]?.value;
+            // `-X screen cmd` opens a window running cmd; exec and eval run more than that.
+            if (command === 'screen') {
+              const rest = args.slice(i + 2).filter((w, k) => k > 0 || !w.value.startsWith('-'));
+              if (rest.length > 0) this.invoke(rest, text, scope, nested('screen -X'), stdin, []);
+            } else if (command === 'exec' || command === 'eval' || command === 'source') {
+              inv.dynamic = true;
+              inv.note = `screen -X ${command} runs commands that belayd does not follow`;
+            }
             // screen turns `\n` and `\r` in the typed text into Enter.
-            if (args[i + 1]?.value === 'stuff' && typed)
+            if (command === 'stuff' && typed)
               this.codeString(
                 [{ ...typed, value: typed.value.replace(/\\[nr]/g, '\n') }],
                 text,
@@ -778,7 +897,7 @@ class Analyzer {
         // The commands come from `-f file` or from stdin, and run later in a shell.
         const f = args.findIndex((w) => w.value === '-f');
         if (f >= 0 && args[f + 1]) this.runScript(inv, args[f + 1]!, scope, ctx, false, true, []);
-        else if (!args.some((w) => /^-[lrdcq]$/.test(w.value)))
+        else if (!args.some((w) => /^-[lrdc]$/.test(w.value)))
           this.stdinCode(inv, stdin, scope, nested(program), true);
         return program;
       }
@@ -788,7 +907,12 @@ class Analyzer {
         const sep = rest.findIndex((w) => w.value === ':::' || w.value === '::::');
         const command = sep >= 0 ? rest.slice(0, sep) : rest;
         const items = sep >= 0 ? rest.slice(sep + 1) : [unknownWord('<items from stdin>')];
-        if (command.length === 0) return program;
+        // With no command, each item is a command of its own.
+        if (command.length === 0) {
+          for (const item of items)
+            this.codeString([item], text, scope, nested('parallel'), undefined);
+          return program;
+        }
         const code = command.map((w) => w.value).join(' ');
         const filled = code.includes('{}')
           ? [
@@ -828,7 +952,10 @@ class Analyzer {
         return program;
       }
       case 'eval':
-        if (ctx.scripts?.length && resetsArguments(args)) return program;
+        if (ctx.scripts?.length && resetsArguments(args)) {
+          delete scope.positional;
+          return program;
+        }
         this.codeString(args, text, scope, nested('eval'), stdin);
         return program;
       case 'source':
@@ -940,8 +1067,9 @@ class Analyzer {
         i++;
         break;
       }
-      if (/^-[A-Za-z]*c[A-Za-z]*$/.test(v)) commandMode = true;
-      else if (/^-[A-Za-z]*s[A-Za-z]*$/.test(v)) stdinMode = true;
+      const flags = /^-[A-Za-z]+$/.test(v) ? v : '';
+      if (flags.includes('c')) commandMode = true;
+      else if (flags.includes('s')) stdinMode = true;
       else if (v === '-o' || v === '+o' || v === '-O' || v === '+O') i++;
       else if (!v.startsWith('-') && !v.startsWith('+')) break;
     }
@@ -1121,6 +1249,21 @@ class Analyzer {
     return true;
   }
 
+  /** The scope for a command that a wrapper runs in another folder (`env -C dir`, `sudo -D dir`). */
+  private withChdir(options: EvalWord[], flags: string[], scope: Scope): Scope {
+    let dir: EvalWord | undefined;
+    for (let i = 0; i < options.length; i++) {
+      const v = options[i]!.value;
+      if (flags.includes(v)) dir = options[i + 1];
+      else if (v.startsWith('--chdir='))
+        dir = { ...options[i]!, value: v.slice('--chdir='.length) };
+    }
+    if (!dir) return scope;
+    const inner = cloneScope(scope);
+    inner.cwd = dir.resolved ? resolveIn(scope.cwd, dir.value, this.opts.home) : undefined;
+    return inner;
+  }
+
   /** `python -m venv dir`, `virtualenv dir` and `uv venv [dir]` write an activate script. */
   private trackVirtualenv(program: string, args: EvalWord[], scope: Scope): void {
     const values = args.map((w) => (w.resolved ? w.value : undefined));
@@ -1164,13 +1307,14 @@ class Analyzer {
       inv.note = 'runs an awk program too large for belayd to check';
       return;
     }
-    const commands = [
-      ...callArguments(code, ['system'], false),
-      ...[...code.matchAll(/"([^"\n]*)"[ \t]*\|[ \t]*getline/g)].map((m) => m[1]!),
-      ...[...code.matchAll(/\|&?[ \t]*"([^"\n]*)"/g)].map((m) => m[1]!),
-    ];
+    const commands = awkCommands(code);
+    if (commands === undefined) {
+      inv.dynamic = true;
+      inv.note = 'runs a command from an awk program that is only known at run time';
+      return;
+    }
     for (const c of commands)
-      this.source(unquote(c), cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
+      this.source(c, cloneScope(scope), { ...ctx, depth: ctx.depth + 1 }, undefined);
   }
 
   /**
@@ -1188,7 +1332,14 @@ class Analyzer {
     /** The script's own arguments, which `$1` and `"$@"` stand for inside it. */
     scriptArgs?: EvalWord[],
   ): void {
-    if (!file.resolved || file.subPrograms.length > 0) return;
+    if (file.subPrograms.length > 0) return; // `bash <(curl ...)`: judged by where it comes from
+    if (!file.resolved) {
+      if (parse === true) {
+        inv.dynamic = true;
+        inv.note = 'runs a script whose name is only known at run time';
+      }
+      return;
+    }
     const abs = resolveIn(scope.cwd, file.value, this.opts.home);
     if (!abs) return;
     inv.scripts.push(abs);
@@ -1210,17 +1361,36 @@ class Analyzer {
     }
     const script = this.opts.readScript(abs);
     if (!script) return unseen('belayd cannot read');
+    const head = script.text.slice(0, 1024);
+    // A text file without `#!` is run by the shell itself; a binary has NUL bytes early on.
     const shellish =
-      /\.(sh|bash|zsh)$/.test(abs) || /^#!.*\b(ba|z|da|k)?sh\b/.test(script.text.slice(0, 256));
+      /\.(sh|bash|zsh)$/.test(abs) ||
+      /^#!.*\b(ba|z|da|k)?sh\b/.test(head) ||
+      (!head.startsWith('#!') && !head.includes('\0'));
     if (parse === 'shebang' && !shellish) return;
     if (script.truncated) return unseen('is too large for belayd to check');
-    if (ctx.scripts?.includes(abs)) return; // it runs itself: already being checked
-    if (ctx.depth >= MAX_DEPTH) return unseen('runs other scripts nested too deeply to check');
     const target = sameScope ? scope : cloneScope(scope);
     const callerArgs = target.positional;
+    const callerName = target.vars.get('0');
     if (scriptArgs) {
       if (scriptArgs.every((w) => w.resolved)) target.positional = scriptArgs.map((w) => w.value);
       else delete target.positional;
+    }
+    if (!sameScope) target.vars.set('0', file.value);
+    // A script that runs itself with the same arguments is already being checked. With
+    // other arguments it can do other things, so it is read again (up to the depth limit).
+    const key = `${abs}\0${target.positional?.join('\0') ?? '\u0001'}`;
+    const restore = () => {
+      if (!sameScope || !scriptArgs) return;
+      // `source x.sh a b` sets the arguments only while x.sh runs.
+      if (callerArgs) target.positional = callerArgs;
+      else delete target.positional;
+      if (callerName !== undefined) target.vars.set('0', callerName);
+    };
+    if (ctx.scripts?.includes(key)) return restore();
+    if (ctx.depth >= MAX_DEPTH) {
+      restore();
+      return unseen('runs other scripts nested too deeply to check');
     }
     this.source(
       script.text,
@@ -1229,15 +1399,11 @@ class Analyzer {
         ...ctx,
         depth: ctx.depth + 1,
         via: [...ctx.via, path.posix.basename(abs)],
-        scripts: [...(ctx.scripts ?? []), abs],
+        scripts: [...(ctx.scripts ?? []), key],
       },
       undefined,
     );
-    // `source x.sh a b` sets the arguments only while x.sh runs.
-    if (sameScope && scriptArgs) {
-      if (callerArgs) target.positional = callerArgs;
-      else delete target.positional;
-    }
+    restore();
   }
 
   private trackWrites(
@@ -1289,19 +1455,25 @@ class Analyzer {
     program: string,
     words: EvalWord[],
     stdin: StdinInfo | undefined,
+    tmpdirChanged = false,
   ): string | undefined {
     const args = words.slice(1);
     if (!args.every((w) => w.resolved)) return undefined;
     switch (program) {
       case 'echo': {
-        const rest = args.filter((w, i) => !(i === 0 && /^-[neE]+$/.test(w.value)));
+        // Leading -n, -e and -E words are options (any number of them); other words
+        // starting with `-` are printed. zsh ends options at a lone `-`, bash prints it.
+        let first = 0;
+        while (/^-[neE]+$/.test(args[first]?.value ?? '')) first++;
+        if (args[first]?.value === '-') return undefined;
+        const rest = args.slice(first);
         // Some echos turn `\x72` into `r` and some do not, so escapes leave the output unknown.
         if (rest.some((w) => w.value.includes('\\'))) return undefined;
         return rest.map((w) => w.value).join(' ') + '\n';
       }
       case 'printf': {
         const [fmt, ...rest] = args.map((w) => w.value);
-        if (fmt === undefined) return undefined;
+        if (fmt === undefined || fmt.startsWith('-')) return undefined;
         if (fmt === '%s' || fmt === '%s\\n') return rest.join('') + (fmt.endsWith('n') ? '\n' : '');
         // Only `\n` and `\t` are followed; any other escape or format leaves it unknown.
         if (fmt.includes('%') || /\\[^nt]/.test(fmt) || fmt.endsWith('\\')) return undefined;
@@ -1312,13 +1484,24 @@ class Analyzer {
         if (program === 'cat' && args.some((w) => w.value !== '-')) return undefined;
         return stdin?.text;
       case 'mktemp': {
-        // A fresh name in the temporary folder, or next to the template it was given.
-        const flag = (w: EvalWord | undefined) => w?.value === '-p' || w?.value === '--tmpdir';
-        const dir = args.find((_, i) => flag(args[i - 1]));
-        const template = args.find((w) => !w.value.startsWith('-') && w !== dir);
-        if (template?.value.includes('/'))
-          return `${path.posix.dirname(template.value)}/tmp.belayd\n`;
-        const base = dir?.value ?? this.opts.env?.TMPDIR ?? '/tmp';
+        // A fresh name in the temporary folder. Only the plain forms are followed: any
+        // other option (`--tmpdir=DIR`, `-pDIR`) or a changed TMPDIR leaves it unknown.
+        if (tmpdirChanged) return undefined;
+        let template: string | undefined;
+        for (let i = 0; i < args.length; i++) {
+          const v = args[i]!.value;
+          if (/^-[dqu]+$/.test(v)) continue;
+          // `-t` puts the name in the temporary folder too, with or without a prefix.
+          if (v === '-t') {
+            const next = args[i + 1]?.value;
+            if (next !== undefined && !next.startsWith('-') && !next.includes('/')) i++;
+            continue;
+          }
+          if (v.startsWith('-') || template !== undefined) return undefined;
+          template = v;
+        }
+        if (template?.includes('/')) return undefined;
+        const base = this.opts.env?.TMPDIR ?? '/tmp';
         return `${base.replace(/\/+$/, '')}/tmp.belayd\n`;
       }
       case 'base64': {
@@ -1382,7 +1565,8 @@ class Analyzer {
   evalWord(word: Word, src: string, scope: Scope, ctx: Ctx): EvalWord {
     if (!word.parts) {
       const value = expandTilde(word.text, word.value, this.opts.home);
-      return { text: word.text, value, values: [value], resolved: true, subPrograms: [] };
+      const resolved = !/\$\{?=/.test(word.text); // zsh's `$=X`, see below
+      return { text: word.text, value, values: [value], resolved, subPrograms: [] };
     }
     const r = this.evalParts(word.parts, src, scope, ctx, false);
     const raw = r.alternatives.map((v) =>
@@ -1398,6 +1582,8 @@ class Analyzer {
     };
     if (raw.some((v) => v.includes(FIELD_BREAK)) || (r.bare && raw.every((v) => v === '')))
       result.fields = raw.map((v) => v.split(FIELD_BREAK).filter(Boolean));
+    // zsh's `$=X` and `${=X}` split a variable into words where bash would not.
+    if (/\$\{?=/.test(word.text)) result.resolved = false;
     return result;
   }
 
@@ -1421,12 +1607,15 @@ class Analyzer {
     const append = (options: string[]) => {
       const next: string[] = [];
       for (const a of alternatives) for (const o of options) next.push(a + o);
+      // Past the limit the remaining words are unknown, never silently dropped.
+      if (next.length > MAX_ALTERNATIVES) resolved = false;
       alternatives = next.slice(0, MAX_ALTERNATIVES);
     };
     const expanded = (value: string) => {
       if (quoted) return append([value]);
-      // A changed IFS splits words somewhere we do not follow.
-      if (scope.vars.has('IFS')) resolved = false;
+      // A changed IFS splits words somewhere we do not follow. It can be changed in ways
+      // the scope does not show (`IFS=x eval ...`, `printf -v IFS`), so any mention counts.
+      if (scope.vars.has('IFS') || this.ifsMentioned) resolved = false;
       append([value.replace(/[ \t\n]+/g, FIELD_BREAK)]);
     };
     for (const part of parts) {
@@ -1472,7 +1661,9 @@ class Analyzer {
             (part.operation.operator === ':-' || part.operation.operator === '-')
           ) {
             v = this.lookup(part.parameter, scope);
-            if (v === undefined) {
+            // A variable known to hold something unknown (`X=$(cmd)`, `read X`) may
+            // well be set, so its fallback says nothing about its value.
+            if (v === undefined && !this.knownUnknown(part.parameter, scope)) {
               const fallback = this.evalWord(part.operation.operand, src, scope, ctx);
               subPrograms.push(...fallback.subPrograms);
               if (fallback.resolved) v = fallback.value;
@@ -1537,6 +1728,11 @@ class Analyzer {
       }
     }
     return { alternatives, resolved, subPrograms, bare };
+  }
+
+  private knownUnknown(name: string, scope: Scope): boolean {
+    if (/^[1-9@*#]$/.test(name)) return !scope.positional;
+    return scope.vars.has(name) && scope.vars.get(name) === null;
   }
 
   private lookup(name: string, scope: Scope): string | undefined {
@@ -1632,6 +1828,7 @@ function cloneScope(scope: Scope): Scope {
     downloads: scope.downloads, // shared: a download in a subshell still lands on disk
     written: scope.written,
     generated: scope.generated,
+    functions: new Map(scope.functions),
     ...(scope.positional ? { positional: scope.positional } : {}),
   };
 }
@@ -1818,22 +2015,111 @@ function isAllArguments(part: WordPart): boolean {
   );
 }
 
-const TEXT_TOOLS = new Set(['printf', 'echo', 'xargs', 'sed', 'tr', 'cat']);
+const TEXT_TOOLS = new Set(['printf', 'echo', 'xargs', 'sed', 'tr']);
+/** The sed script in Gradle's wrapper that backslash-escapes every character a shell treats specially. */
+const GRADLE_ESCAPE = 's~[^-[:alnum:]+,./:=@_]~\\\\&~g';
 
 /**
  * Wrapper scripts such as gradlew rebuild their arguments with
- * `eval "set -- $(printf '%s\n' "$JAVA_OPTS" | xargs -n1 | sed ...)" '"$@"'`. The eval
- * only resets the arguments, from the output of text tools, so it runs no command of
- * its own. Only used for scripts read from disk, never for a command typed by the agent.
+ * `eval "set -- $(printf '%s\n' "$JAVA_OPTS" | xargs -n1 | sed '...' | tr '\n' ' ')" '"$@"'`.
+ * The sed step escapes every special character, so the eval can only reset the
+ * arguments. Only that exact shape counts, and only in scripts read from disk, never
+ * in a command typed by the agent. When the output is known, the eval is checked as
+ * usual instead.
  */
 function resetsArguments(args: EvalWord[]): boolean {
-  const first = args[0];
-  if (!first || !/^["']?set -- /.test(first.text)) return false;
-  const open = first.text.indexOf('$(');
-  const close = first.text.lastIndexOf(')');
-  if (open < 0 || close < open) return false;
-  const outside = first.text.slice(0, open) + first.text.slice(close + 1);
-  if (/[$`]/.test(outside)) return false;
+  const [first, ...rest] = args;
+  if (!first || first.resolved) return false;
+  const text = first.text;
+  if (!text.startsWith('"set -- $(') || !text.endsWith(')"')) return false;
+  if (text.indexOf('$(') !== 8 || text.lastIndexOf(')') !== text.length - 2) return false;
+  if (!text.includes(GRADLE_ESCAPE)) return false;
   if (!first.subPrograms.every((p) => TEXT_TOOLS.has(p))) return false;
-  return args.slice(1).every((w) => w.resolved);
+  return rest.length <= 1 && rest.every((w) => w.text === `'"$@"'`);
+}
+
+/**
+ * The shell commands an awk program runs: `system("cmd")`, `"cmd" | getline` and
+ * `print | "cmd"`. Undefined when one of them is built at run time, has escapes, or
+ * pipes into a shell, since belayd cannot know that command. One pass over the string
+ * literals, then plain index lookups, so the time stays linear in the program size.
+ */
+function awkCommands(code: string): string[] | undefined {
+  const byStart = new Map<number, { body: string; end: number }>();
+  const byEnd = new Map<number, { body: string; end: number }>();
+  const inString = new Uint8Array(code.length);
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] !== '"') continue;
+    let j = i + 1;
+    while (j < code.length && code[j] !== '"' && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+    if (code[j] !== '"') break;
+    const lit = { body: code.slice(i + 1, j), end: j + 1 };
+    byStart.set(i, lit);
+    byEnd.set(j + 1, lit);
+    inString.fill(1, i, j + 1);
+    i = j;
+  }
+  const skip = (p: number, step: 1 | -1) => {
+    while (code[p] === ' ' || code[p] === '\t') p += step;
+    return p;
+  };
+  const plain = (lit: { body: string } | undefined) =>
+    lit && !lit.body.includes('\\') ? lit.body : undefined;
+  const out: string[] = [];
+
+  for (const m of code.matchAll(/(?<![A-Za-z0-9_])system[ \t]*\(/g)) {
+    if (inString[m.index]) continue;
+    const lit = byStart.get(skip(m.index + m[0].length, 1));
+    const body = plain(lit);
+    if (body === undefined || code[skip(lit!.end, 1)] !== ')') return undefined;
+    out.push(body);
+  }
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] !== '|' || inString[i] || code[i + 1] === '|' || code[i - 1] === '|') continue;
+    let after = i + 1;
+    if (code[after] === '&') after++;
+    after = skip(after, 1);
+    if (code.startsWith('getline', after)) {
+      const body = plain(byEnd.get(skip(i - 1, -1) + 1));
+      if (body === undefined) return undefined;
+      out.push(body);
+      continue;
+    }
+    const target = byStart.get(after);
+    if (target) {
+      const body = plain(target);
+      if (body === undefined || /^\s*(\S*\/)?(ba|z|da|k|fi)?sh(\s|$)/.test(body)) return undefined;
+      out.push(body);
+      continue;
+    }
+    // `print | cmd` with cmd in a variable. A `|` elsewhere is regex alternation.
+    let start = i;
+    const floor = Math.max(0, i - 1000);
+    while (start > floor && !';{}\n'.includes(code[start - 1]!)) start--;
+    if (/\bprintf?\b/.test(code.slice(start, i))) return undefined;
+  }
+  return out;
+}
+
+/** The arguments left after getopt-style options, where `valueLetters` take a value. */
+function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
+  const out: EvalWord[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const v = args[i]!.value;
+    if (v === '--') {
+      out.push(...args.slice(i + 1));
+      break;
+    }
+    if (!v.startsWith('-') || v === '-') {
+      out.push(args[i]!);
+      continue;
+    }
+    // `-dsx` is three flags; `-sname` is -s with its value; `-ds name` takes the next word.
+    for (let k = 1; k < v.length; k++) {
+      if (!valueLetters.includes(v[k]!)) continue;
+      if (k === v.length - 1) i++;
+      break;
+    }
+  }
+  return out;
 }

@@ -437,3 +437,58 @@
 - { cmd: 'git restore --staged --worktree .', balanced: ask, yolo: allow }
 - { cmd: 'git restore -SW .', balanced: ask, yolo: allow }
 - { cmd: 'git stash --staged', balanced: pass }
+
+# --- Security review 3 --------------------------------------------------------
+- { cmd: 'wipe() { rm -rf "$1"; }; wipe ~', balanced: deny }
+- {
+    cmd: 'wipe() { rm -rf "$1"; }; wipe build',
+    balanced: ask,
+    yolo: allow,
+    note: the body alone does not know $1,
+  }
+- { cmd: 'ls() { cat "$@"; }; ls .env', balanced: deny, yolo: ask }
+- { cmd: 'cd() { cat "$1"; }; cd .env', balanced: deny, yolo: ask }
+- { cmd: 'f() { cd /; }; f; rm -rf *', balanced: deny, note: a function runs in the calling shell }
+- { cmd: 'set -- ~; rm -rf "$1"', balanced: deny }
+- { cmd: 'set -euo pipefail; echo ok', balanced: pass }
+- { cmd: 'X=$(cat dir.txt); rm -rf "${X:-build}"', balanced: ask, yolo: allow }
+- { cmd: 'read X; rm -rf ${X-build}', balanced: ask, yolo: allow }
+- {
+    cmd: 'rm -rf "${OUT:-dist}"',
+    balanced: pass,
+    note: never assigned here,
+    so the fallback is used,
+  }
+- { cmd: "printf -- 'rm -rf ~' | sh", balanced: ask, note: printf -- is not the format }
+- { cmd: 'echo -n -e ''\x72m -rf ~'' | sh', balanced: ask }
+- { cmd: 'echo - rm -rf ~ | zsh', balanced: ask }
+- { cmd: "IFS=x eval 'X=rmx-rfx~; $X'", balanced: ask }
+- { cmd: '=rm -rf ~', balanced: deny, note: zsh expands =rm to its path }
+- { cmd: 'X="rm -rf ~"; $=X', balanced: ask }
+- { cmd: "awk 'BEGIN { system(cmd) }'", balanced: ask }
+- { cmd: 'awk ''BEGIN { system("rm -rf " ENVIRON["HOME"]) }''', balanced: ask }
+- { cmd: 'awk ''BEGIN { system("\176") }''', balanced: ask }
+- { cmd: 'awk ''BEGIN { print "rm -rf ~" | "sh" }''', balanced: ask }
+- { cmd: "awk '{ print | cmd }'", balanced: ask }
+- { cmd: "awk '/error|warn/ { n++ } END { print n }' app.log", balanced: pass }
+- { cmd: "at -q b now <<< 'rm -rf ~'", balanced: deny }
+- { cmd: "parallel ::: 'rm -rf ~'", balanced: deny }
+- { cmd: "tmux run -b 'rm -rf ~'", balanced: deny }
+- { cmd: "tmux send-keys -l 'rm -rf ~' Enter", balanced: deny }
+- { cmd: "tmux new -dsx 'rm -rf ~'", balanced: deny }
+- { cmd: "tmux display-popup 'rm -rf ~'", balanced: deny }
+- { cmd: 'tmux if-shell true ''run-shell "rm -rf ~"''', balanced: ask }
+- { cmd: 'tmux new -c ~/project -s work', balanced: pass }
+- { cmd: 'screen -S job -X screen rm -rf ~', balanced: deny }
+- { cmd: "screen -S job -X eval 'stuff x'", balanced: ask }
+- { cmd: 'env -C / rm -rf *', balanced: deny }
+- { cmd: 'sudo -D / rm -rf *', balanced: deny }
+- { cmd: 'pnpm -w publish', balanced: ask }
+- { cmd: 'bun -w publish', balanced: ask }
+- { cmd: 'pnpm -w add -g typescript', balanced: ask }
+- {
+    cmd: 'rm -rf build/{a0,a1,a2,a3,a4,a5,a6,a7}{b0,b1,b2,b3,b4,b5,b6,b7}{c0,c1}',
+    balanced: ask,
+    yolo: allow,
+    note: past the expansion limit the rest is unknown,
+  }
