@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ensurePrivateDir } from '../util/paths.js';
 
 /**
  * Pending approvals are plain JSON files under $BELAYD_HOME/approvals, so the hook,
@@ -128,7 +129,8 @@ function alive(pid: number): boolean {
 }
 
 function writeJson(file: string, data: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  ensurePrivateDir(path.dirname(path.dirname(path.dirname(file))));
+  ensurePrivateDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
   fs.renameSync(tmp, file);

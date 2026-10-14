@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { ensurePrivateDir } from '../util/paths.js';
 
 /**
  * The audit trail: one append-only SQLite table under $BELAYD_HOME.
@@ -125,7 +126,7 @@ export class AuditLog {
   static async open(belaydHome: string, opts: { readOnly?: boolean } = {}): Promise<AuditLog> {
     const { DatabaseSync } = await sqlite();
     const file = auditPath(belaydHome);
-    if (!opts.readOnly) fs.mkdirSync(belaydHome, { recursive: true, mode: 0o700 });
+    if (!opts.readOnly) ensurePrivateDir(belaydHome);
     const db = new DatabaseSync(file, opts.readOnly ? { readOnly: true } : {});
     db.exec('PRAGMA busy_timeout = 3000;');
     if (!opts.readOnly) {

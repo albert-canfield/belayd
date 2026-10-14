@@ -53,3 +53,16 @@ export function canonicalPath(p: string): string {
     }
   }
 }
+
+/**
+ * belayd's folders hold the audit log, snapshots and approval keys. They are created
+ * readable by you only, and tightened if they already exist with looser permissions.
+ */
+export function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    if ((fs.statSync(dir).mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  } catch {
+    // not ours to change; nothing else to do
+  }
+}

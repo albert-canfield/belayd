@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { version } from '../version.js';
 import { isTrusted, trustKey } from './trust.js';
+import { ensurePrivateDir } from '../util/paths.js';
 import type { Rule } from './schema.js';
 
 export const POLICY_FILE = 'belayd.yaml';
@@ -131,7 +132,8 @@ function cacheKey(
 
 function writeCache(file: string, policy: CompiledPolicy): void {
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    ensurePrivateDir(path.dirname(path.dirname(file)));
+    ensurePrivateDir(path.dirname(file));
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(policy));
     fs.renameSync(tmp, file);
