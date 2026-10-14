@@ -76,6 +76,8 @@ export interface AnalyzeOptions {
 
 const MAX_DEPTH = 6;
 const MAX_ALTERNATIVES = 64;
+/** Marks where an unquoted expansion splits a word. The shell drops NUL bytes, so it is free. */
+const FIELD_BREAK = '\u0000';
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'fish', 'busybox']);
 const NETWORK_FETCHERS = new Set([
@@ -195,6 +197,11 @@ interface EvalWord {
   resolved: boolean;
   /** Programs run inside `$(...)` or `<(...)` within this word. */
   subPrograms: string[];
+  /**
+   * Set when an unquoted expansion split this word into several (`X="rm -rf"; $X ~`),
+   * or removed it (an empty `$X`): one list of words per alternative in `values`.
+   */
+  fields?: string[][];
 }
 
 interface Scope {
@@ -390,11 +397,10 @@ class Analyzer {
   ): string | undefined {
     const text = src.slice(cmd.pos, cmd.end);
     const words: EvalWord[] = [];
-    if (cmd.name) words.push(this.evalWord(cmd.name, src, scope, ctx));
+    if (cmd.name) words.push(...expandWord(this.evalWord(cmd.name, src, scope, ctx)));
     const assignments: { name: string; value: EvalWord }[] = [];
     for (const arg of cmd.args) {
-      if (arg.type === 'Word')
-        words.push(...splitAlternatives(this.evalWord(arg, src, scope, ctx)));
+      if (arg.type === 'Word') words.push(...expandWord(this.evalWord(arg, src, scope, ctx)));
       else {
         const value = this.evalAssignment(arg, src, scope, ctx);
         words.push({ ...value, value: `${arg.name}=${value.value}`, text: arg.text });
@@ -1011,14 +1017,17 @@ class Analyzer {
     switch (program) {
       case 'echo': {
         const rest = args.filter((w, i) => !(i === 0 && /^-[neE]+$/.test(w.value)));
+        // Some echos turn `\x72` into `r` and some do not, so escapes leave the output unknown.
+        if (rest.some((w) => w.value.includes('\\'))) return undefined;
         return rest.map((w) => w.value).join(' ') + '\n';
       }
       case 'printf': {
         const [fmt, ...rest] = args.map((w) => w.value);
         if (fmt === undefined) return undefined;
-        if (!fmt.includes('%')) return unescape(fmt);
         if (fmt === '%s' || fmt === '%s\\n') return rest.join('') + (fmt.endsWith('n') ? '\n' : '');
-        return undefined;
+        // Only `\n` and `\t` are followed; any other escape or format leaves it unknown.
+        if (fmt.includes('%') || /\\[^nt]/.test(fmt) || fmt.endsWith('\\')) return undefined;
+        return unescape(fmt);
       }
       case 'cat':
       case 'tee':
@@ -1048,7 +1057,7 @@ class Analyzer {
     let inline: string | undefined;
     for (const r of list) {
       if (r.type === 'HereDoc') {
-        if (r.body.parts) this.evalParts(r.body.parts, src, scope, ctx);
+        if (r.body.parts) this.evalParts(r.body.parts, src, scope, ctx, true);
         inline ??= r.body.text;
       } else if (r.type === 'HereString') {
         if (r.target) inline ??= this.evalWord(r.target, src, scope, ctx).value + '\n';
@@ -1087,34 +1096,58 @@ class Analyzer {
       const value = expandTilde(word.text, word.value, this.opts.home);
       return { text: word.text, value, values: [value], resolved: true, subPrograms: [] };
     }
-    const r = this.evalParts(word.parts, src, scope, ctx);
-    const values = r.alternatives.map((v) =>
+    const r = this.evalParts(word.parts, src, scope, ctx, false);
+    const raw = r.alternatives.map((v) =>
       word.text.startsWith('~') ? expandTilde(word.text, v, this.opts.home) : v,
     );
-    return {
+    const values = raw.map((v) => v.replaceAll(FIELD_BREAK, ' '));
+    const result: EvalWord = {
       text: word.text,
       value: values[0] ?? '',
       values,
       resolved: r.resolved,
       subPrograms: r.subPrograms,
     };
+    if (raw.some((v) => v.includes(FIELD_BREAK)) || (r.bare && raw.every((v) => v === '')))
+      result.fields = raw.map((v) => v.split(FIELD_BREAK).filter(Boolean));
+    return result;
   }
 
+  /**
+   * Expands the parts of one word. Outside double quotes, the result of an expansion is
+   * split into words at whitespace, like the shell does: the breaks are marked with
+   * FIELD_BREAK and turned into separate words by expandWord.
+   */
   private evalParts(
     parts: readonly WordPart[],
     src: string,
     scope: Scope,
     ctx: Ctx,
-  ): { alternatives: string[]; resolved: boolean; subPrograms: string[] } {
+    quoted: boolean,
+  ): { alternatives: string[]; resolved: boolean; subPrograms: string[]; bare: boolean } {
     let alternatives = [''];
     let resolved = true;
+    // True while the word is made only of unquoted expansions, which vanish when empty.
+    let bare = true;
     const subPrograms: string[] = [];
     const append = (options: string[]) => {
       const next: string[] = [];
       for (const a of alternatives) for (const o of options) next.push(a + o);
       alternatives = next.slice(0, MAX_ALTERNATIVES);
     };
+    const expanded = (value: string) => {
+      if (quoted) return append([value]);
+      // A changed IFS splits words somewhere we do not follow.
+      if (scope.vars.has('IFS')) resolved = false;
+      append([value.replace(/[ \t\n]+/g, FIELD_BREAK)]);
+    };
     for (const part of parts) {
+      if (
+        part.type !== 'SimpleExpansion' &&
+        part.type !== 'ParameterExpansion' &&
+        part.type !== 'CommandExpansion'
+      )
+        bare = false;
       switch (part.type) {
         case 'Literal':
         case 'SingleQuoted':
@@ -1123,7 +1156,7 @@ class Analyzer {
           break;
         case 'DoubleQuoted':
         case 'LocaleString': {
-          const inner = this.evalParts(part.parts as readonly WordPart[], src, scope, ctx);
+          const inner = this.evalParts(part.parts as readonly WordPart[], src, scope, ctx, true);
           resolved &&= inner.resolved;
           subPrograms.push(...inner.subPrograms);
           append([inner.alternatives[0] ?? '']);
@@ -1134,7 +1167,7 @@ class Analyzer {
           if (v === undefined) {
             resolved = false;
             append([part.text]);
-          } else append([v]);
+          } else expanded(v);
           break;
         }
         case 'ParameterExpansion': {
@@ -1155,7 +1188,7 @@ class Analyzer {
           if (v === undefined) {
             resolved = false;
             append([part.text]);
-          } else append([v]);
+          } else expanded(v);
           break;
         }
         case 'CommandExpansion':
@@ -1190,7 +1223,7 @@ class Analyzer {
               .filter(Boolean),
           );
           if (part.type === 'ProcessSubstitution') append(['/dev/fd/63']);
-          else if (staticOut !== undefined) append([staticOut.replace(/\n+$/, '')]);
+          else if (staticOut !== undefined) expanded(staticOut.replace(/\n+$/, ''));
           else {
             resolved = false;
             append([part.text]);
@@ -1210,7 +1243,7 @@ class Analyzer {
           break;
       }
     }
-    return { alternatives, resolved, subPrograms };
+    return { alternatives, resolved, subPrograms, bare };
   }
 
   private lookup(name: string, scope: Scope): string | undefined {
@@ -1334,10 +1367,14 @@ function quote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-/** `/{etc,usr}` expands to two words, `/etc` and `/usr`. */
-function splitAlternatives(w: EvalWord): EvalWord[] {
-  if (w.values.length <= 1) return [w];
-  return w.values.map((value) => ({ ...w, value, values: [value] }));
+/**
+ * The words one word becomes: `/{etc,usr}` expands to `/etc` and `/usr`, an unquoted
+ * `$X` holding `rm -rf` to `rm` and `-rf`, and an empty unquoted `$X` to nothing.
+ */
+function expandWord(w: EvalWord): EvalWord[] {
+  if (!w.fields && w.values.length <= 1) return [w];
+  const words = w.fields ?? w.values.map((v) => [v]);
+  return words.flat().map((value) => ({ ...w, value, values: [value], fields: undefined }));
 }
 
 /** Undo the escapes of a source-code string literal, enough to read a command or path. */

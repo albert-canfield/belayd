@@ -368,3 +368,21 @@
 - { cmd: 'git push origin main --force', balanced: deny, yolo: ask }
 - { cmd: 'belayd trust', balanced: deny }
 - { cmd: 'echo "{}" > ~/.belayd/trusted.json', balanced: deny }
+
+# --- Word splitting: unquoted expansions become several words -----------------
+- { cmd: 'rm -rf $(echo x ~)', balanced: deny }
+- { cmd: '$(echo rm -rf ~)', balanced: deny }
+- { cmd: '$(echo rm -rf) ~', balanced: deny }
+- { cmd: 'rm $(echo -rf ~)', balanced: deny }
+- { cmd: 'rm -rf $(echo dist ~/Documents)', balanced: deny }
+- { cmd: '$(echo cm0gLXJmIH4K | base64 -d)', balanced: deny, note: base64 of rm -rf ~ }
+- { cmd: 'X="rm -rf"; $X ~', balanced: deny }
+- { cmd: 'X=; $X rm -rf ~', balanced: deny, note: an empty unquoted word disappears }
+- { cmd: '{rm,-rf,~}', balanced: deny }
+- { cmd: 'IFS=x; X=rmx-rfx~; $X', balanced: ask }
+- { cmd: '$(printf ''\x72m'') -rf ~', balanced: ask, note: printf escapes are not followed }
+- { cmd: '$(echo -e ''\x72m'') -rf ~', balanced: ask }
+- { cmd: 'X=$(echo ''\x72m''); $X -rf ~', balanced: ask }
+- { cmd: 'rm -rf "$(echo x ~)"', balanced: pass, note: quoted, so one odd file name }
+- { cmd: 'D=build; rm -rf $D', balanced: pass }
+- { cmd: 'X="a b"; echo $X', balanced: pass, strict: allow }
