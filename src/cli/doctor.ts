@@ -20,7 +20,7 @@ import {
 } from '../integrations/claude-code/install.js';
 import { loadPolicy } from '../policy/load.js';
 import { version } from '../version.js';
-import { belaydHome, findWorkspace, homeDir } from '../util/paths.js';
+import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 
 type Status = 'ok' | 'warn' | 'fail';
 
@@ -38,6 +38,17 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
   const state = belaydHome();
   let policyTimeoutMs: number | undefined;
   line('ok', `belayd ${version} on Node ${process.versions.node}`);
+  // A BELAYD_HOME inside the project is one a repository could ship, pre-trusted policy
+  // and all, or one the agent can edit like any project file.
+  const realState = canonicalPath(state);
+  const realWorkspace = canonicalPath(workspace);
+  if (realState === realWorkspace || realState.startsWith(realWorkspace + path.sep)) {
+    line(
+      'warn',
+      `belayd keeps its data inside this project (${state})`,
+      'Point BELAYD_HOME outside the project, or unset it to use ~/.belayd.',
+    );
+  }
 
   try {
     const policy = await loadPolicy({ workspace, belaydHome: state, noCache: true });

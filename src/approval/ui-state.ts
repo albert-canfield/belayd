@@ -72,14 +72,22 @@ export function createLinkKey(belaydHome: string): string {
   const key = crypto.randomBytes(24).toString('hex');
   const dir = path.join(belaydHome, 'ui-links');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(dir, key), String(Date.now() + LINK_TTL_MS), { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, linkFile(key)), String(Date.now() + LINK_TTL_MS), {
+    mode: 0o600,
+    flag: 'wx',
+  });
   return key;
+}
+
+/** Only a hash of the key is stored, so listing the folder does not reveal a usable link. */
+function linkFile(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex');
 }
 
 /** Uses up a link key. True only the first time, and only before it expires. */
 export function consumeLinkKey(belaydHome: string, key: string): boolean {
   if (!/^[a-f0-9]{48}$/.test(key)) return false;
-  const file = path.join(belaydHome, 'ui-links', key);
+  const file = path.join(belaydHome, 'ui-links', linkFile(key));
   let expires: number;
   try {
     expires = Number(fs.readFileSync(file, 'utf8'));

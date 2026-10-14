@@ -96,11 +96,22 @@ rules:
     decision: deny
     reason: These files belong to belayd's approval system. Ask the user to approve the request themselves.
 
+  # Matched on the URL, not the host: 127.1, 2130706433, *.localhost and a Host
+  # header all reach the same page.
   - id: no-approval-api
     final: true
     match:
-      domain: [127.0.0.1, localhost, '[::1]', 0.0.0.0]
-      args: { any: ['*/api/decide*', '*/api/state*', '*:23529*'] }
+      args:
+        {
+          any:
+            [
+              '*:23529/api/*',
+              '*://127.*/api/decide*',
+              '*://localhost*/api/decide*',
+              '*://[::1]*/api/decide*',
+              '*://0.0.0.0*/api/decide*',
+            ],
+        }
     decision: deny
     reason: Only a person can answer belayd's approval requests.
 
