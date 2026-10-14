@@ -301,6 +301,44 @@ describe('hardening from the security review', () => {
     expect(fs.readFileSync(path.join(outside, 'file.txt'), 'utf8')).toBe('precious\n');
   });
 
+  it('redo never deletes through a folder that became a symlink again', () => {
+    // The reviewer's case: a step swaps a folder for a link that leads outside, undo
+    // cannot write through the link, the user rebuilds the folder by hand, then redo.
+    const outside = path.join(sb.dir, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'file'), 'canary\n');
+    write('d/file', 'original\n');
+    shellStep('rm -rf d && ln -s ../outside d');
+    belayd(sb, ['undo']);
+    fs.rmSync(path.join(sb.project, 'd'), { force: true, recursive: true });
+    write('d/file', 'mine\n');
+    const refused = belayd(sb, ['redo']);
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toMatch(/changed after the undo/);
+    expect(read('d/file')).toBe('mine\n');
+    belayd(sb, ['redo', '--force']);
+    expect(fs.readFileSync(path.join(outside, 'file'), 'utf8')).toBe('canary\n');
+  });
+
+  it('refuses to redo over files changed after the undo', () => {
+    writeStep('src/app.ts', 'agent version\n');
+    belayd(sb, ['undo']);
+    write('src/app.ts', 'my own edit\n');
+    expect(belayd(sb, ['redo']).status).toBe(1);
+    expect(read('src/app.ts')).toBe('my own edit\n');
+    expect(belayd(sb, ['redo', '--force']).status).toBe(0);
+    expect(read('src/app.ts')).toBe('agent version\n');
+  });
+
+  it('copes with a folder where a file used to be', () => {
+    writeStep('src/app.ts', 'agent version\n');
+    fs.rmSync(path.join(sb.project, 'src/app.ts'));
+    fs.mkdirSync(path.join(sb.project, 'src/app.ts'));
+    const r = belayd(sb, ['undo']);
+    expect(r.stderr).not.toMatch(/Unable to hash/);
+    expect(r.stdout).toMatch(/changed again/);
+  });
+
   it('restores bytes exactly, whatever .gitattributes says', () => {
     write('.gitattributes', '* text=auto eol=lf\n');
     const crlf = 'line one\r\nline two\r\n';

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalPath, ensurePrivateDir } from '../util/paths.js';
 
+/** Stands for a folder where a file was expected; equal to no blob id. */
+const FOLDER = 'folder';
+
 /**
  * Snapshots live in a shadow Git repository per workspace, under
  * $BELAYD_HOME/snapshots/<id>, with its own index. It never touches the project's
@@ -251,7 +254,10 @@ export class Shadow {
     }
   }
 
-  /** The blob id the file would have right now, or undefined when it does not exist. */
+  /**
+   * The blob id the file would have right now, or undefined when it does not exist. A
+   * folder in its place gets a marker that matches no snapshot, so it counts as changed.
+   */
   currentBlob(file: string): string | undefined {
     if (this.beyondSymlink(file)) return undefined;
     const full = path.join(this.workspace, file);
@@ -261,6 +267,7 @@ export class Shadow {
     } catch {
       return undefined;
     }
+    if (st.isDirectory()) return FOLDER;
     // Git stores a symlink as the text of its target. Hash the same, never follow it.
     if (st.isSymbolicLink()) {
       return this.git(['hash-object', '--stdin'], fs.readlinkSync(full)).trim();
@@ -288,32 +295,57 @@ export class Shadow {
 
   /**
    * Puts files back the way they were in `tree`. Files absent from `tree` are deleted.
-   * Returns the files it would not touch because a folder on their path is now a symlink.
+   * Returns the files it would not touch because a folder on their path is now a symlink,
+   * or because a folder now stands where a file is to be deleted.
    */
   restore(tree: string, files: string[]): string[] {
     return this.locked(() => {
-      const unsafe = files.filter((f) => this.beyondSymlink(f) || !this.inside(f));
-      const safe = files.filter((f) => !unsafe.includes(f));
+      const unsafe = (f: string) => this.beyondSymlink(f) || !this.inside(f);
+      const skipped = files.filter(unsafe);
+      const safe = files.filter((f) => !skipped.includes(f));
       const present = safe.filter((f) => this.blobAt(tree, f));
       const absent = safe.filter((f) => !present.includes(f));
-      if (present.length > 0) {
-        this.git(
-          ['checkout', tree, '--pathspec-from-file=-', '--pathspec-file-nul'],
-          present.join('\0'),
-        );
-      }
+      // Deletions come first, each checked again right before it happens: a checkout
+      // can turn a folder back into a symlink, and a later delete must not follow it.
       for (const f of absent) {
-        fs.rmSync(path.join(this.workspace, f), { force: true });
+        const full = path.join(this.workspace, f);
+        let isFolder = false;
+        try {
+          isFolder = fs.lstatSync(full).isDirectory();
+        } catch {
+          // already gone
+        }
+        if (isFolder || unsafe(f)) {
+          skipped.push(f);
+          continue;
+        }
+        fs.rmSync(full, { force: true });
         this.git(['update-index', '-q', '--force-remove', '--', f]);
       }
-      return unsafe;
+      const checkout = present.filter((f) => !unsafe(f));
+      skipped.push(...present.filter((f) => !checkout.includes(f)));
+      if (checkout.length > 0) {
+        this.git(
+          ['checkout', tree, '--pathspec-from-file=-', '--pathspec-file-nul'],
+          checkout.join('\0'),
+        );
+      }
+      // The index now matches the restored files; record it so the next snapshot does
+      // not hand back the tree from before the restore.
+      this.writeTree();
+      return skipped;
     });
   }
 
-  /** The path, resolved through any symlinks that exist, stays inside the workspace. */
+  /**
+   * The path's folder, resolved through any symlinks that exist, stays inside the
+   * workspace. The file itself may be a link: replacing or deleting a link never
+   * touches what it points to.
+   */
   private inside(file: string): boolean {
-    const real = canonicalPath(path.join(this.workspace, file));
-    return real === this.workspace || real.startsWith(this.workspace + path.sep);
+    const full = path.join(this.workspace, file);
+    const real = path.join(canonicalPath(path.dirname(full)), path.basename(full));
+    return real.startsWith(this.workspace + path.sep);
   }
 
   diff(from: string, to: string, files: string[]): string {

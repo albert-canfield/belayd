@@ -116,9 +116,11 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .command('redo')
     .description('Reverse the most recent belayd undo in this project')
-    .action(async () => {
+    .option('--dry-run', 'show what would change without touching anything')
+    .option('--force', 'redo even if the files changed after the undo')
+    .action(async (opts) => {
       const { redo } = await import('./undo.js');
-      process.exitCode = await friendlySnapshotErrors(() => redo());
+      process.exitCode = await friendlySnapshotErrors(() => redo(opts));
     });
 
   program

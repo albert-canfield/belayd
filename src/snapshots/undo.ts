@@ -3,6 +3,8 @@ import { Shadow, type Change } from './shadow.js';
 
 export interface SnapRef {
   tree: string;
+  /** For an undo: the snapshot right after it, so a redo can tell what changed since. */
+  after?: string;
   paths?: string[];
   /** Files too big to capture. Undo cannot restore them. */
   skipped?: string[];
@@ -121,8 +123,9 @@ export function planUndo(shadow: Shadow, all: StepChanges[], steps: Set<number>)
 }
 
 /**
- * Applies a plan. Returns the snapshot taken just before (so the undo can be undone)
- * and the files it left alone because a folder on their path is now a symlink.
+ * Applies a plan. Returns the snapshots taken just before and just after (so the undo
+ * can be undone, and the redo can check nothing changed in between), and the files it
+ * left alone because a link or folder now stands in the way.
  */
 export function applyUndo(shadow: Shadow, plan: UndoPlan): { before: SnapRef; skipped: string[] } {
   const before = shadow.snapshotAll();
@@ -130,6 +133,33 @@ export function applyUndo(shadow: Shadow, plan: UndoPlan): { before: SnapRef; sk
   for (const f of plan.files) byTree.set(f.tree, [...(byTree.get(f.tree) ?? []), f.path]);
   const skipped: string[] = [];
   for (const [tree, files] of byTree) skipped.push(...shadow.restore(tree, files));
-  shadow.snapshotAll();
-  return { before: { tree: before.tree }, skipped };
+  const after = shadow.snapshotAll();
+  return { before: { tree: before.tree, after: after.tree }, skipped };
+}
+
+/**
+ * The plan for reversing an undo: put back the files as they were just before it. A
+ * file changed since the undo is a conflict, like a file changed after an undone step.
+ */
+export function planRedo(shadow: Shadow, undone: SnapRef, files: string[]): UndoPlan {
+  const plan: UndoPlan = { steps: [], files: [], conflicts: [], unchanged: [] };
+  for (const f of files) {
+    const target = shadow.blobAt(undone.tree, f);
+    const current = shadow.currentBlob(f);
+    if (current === target) {
+      plan.unchanged.push(f);
+      continue;
+    }
+    // An undo recorded before belayd kept the after snapshot cannot be checked.
+    if (!undone.after || current !== shadow.blobAt(undone.after, f))
+      plan.conflicts.push({ path: f, lastStep: 0 });
+    plan.files.push({
+      path: f,
+      action: target ? 'restore' : 'delete',
+      tree: undone.tree,
+      firstStep: 0,
+      lastStep: 0,
+    });
+  }
+  return plan;
 }

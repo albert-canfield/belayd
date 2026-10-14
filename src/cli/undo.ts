@@ -6,6 +6,7 @@ import { Shadow } from '../snapshots/shadow.js';
 import {
   applyUndo,
   parseSnapshot,
+  planRedo,
   planUndo,
   stepChanges,
   type UndoPlan,
@@ -103,6 +104,10 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
     }
 
     const { before, skipped } = applyUndo(shadow, plan);
+    const done = plan.files.length - skipped.length;
+    printSkipped(skipped);
+    // An undo that changed nothing is not recorded, so there is nothing to redo.
+    if (done === 0) return 1;
     await record(home, {
       session,
       phase: 'undo',
@@ -115,26 +120,33 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
       outcome: 'undo',
       snapshot: JSON.stringify(before),
     });
-    const done = plan.files.length - skipped.length;
     console.log(
       pc.green(`\n✔ Undid ${done} file change${done === 1 ? '' : 's'}.`) +
         pc.dim('  Changed your mind? belayd redo'),
     );
-    for (const f of skipped) {
-      console.log(
-        pc.yellow(
-          `  left alone: ${f} (a folder on its path is now a link, belayd will not write through it)`,
-        ),
-      );
-    }
     return skipped.length > 0 ? 1 : 0;
   } finally {
     db.close();
   }
 }
 
+function printSkipped(skipped: string[]): void {
+  for (const f of skipped) {
+    console.log(
+      pc.yellow(
+        `  left alone: ${f} (a link or folder now stands in the way, belayd will not write through it)`,
+      ),
+    );
+  }
+}
+
+export interface RedoOptions {
+  dryRun?: boolean;
+  force?: boolean;
+}
+
 /** Reverses the most recent undo in this project. */
-export async function redo(): Promise<number> {
+export async function redo(opts: RedoOptions = {}): Promise<number> {
   const home = belaydHome();
   const workspace = findWorkspace(process.cwd());
   if (!AuditLog.exists(home)) {
@@ -159,19 +171,27 @@ export async function redo(): Promise<number> {
       return 1;
     }
     const shadow = new Shadow(home, last.workspace);
-    const plan: UndoPlan = {
-      steps: [],
-      files: files.map((f) => ({
-        path: f,
-        action: shadow.blobAt(before.tree, f) ? 'restore' : 'delete',
-        tree: before.tree,
-        firstStep: 0,
-        lastStep: 0,
-      })),
-      conflicts: [],
-      unchanged: [],
-    };
-    const snap = applyUndo(shadow, plan).before;
+    const plan = planRedo(shadow, before, files);
+    if (plan.files.length === 0) {
+      console.log(pc.green('Nothing to do: those files are already as they were.'));
+      return 0;
+    }
+    if (plan.conflicts.length > 0 && !opts.force) {
+      for (const c of plan.conflicts) console.log(pc.red(`✖ ${c.path} changed after the undo.`));
+      console.log(
+        pc.dim('  Redoing now would throw that newer work away. Use --force to redo anyway.'),
+      );
+      return 1;
+    }
+    if (opts.dryRun) {
+      for (const f of plan.files) console.log(`  ${f.action}  ${f.path}`);
+      console.log(pc.dim('Dry run: nothing changed.'));
+      return 0;
+    }
+    const { before: snap, skipped } = applyUndo(shadow, plan);
+    printSkipped(skipped);
+    const done = plan.files.length - skipped.length;
+    if (done === 0) return 1;
     await record(home, {
       session: last.session,
       phase: 'undo',
@@ -187,11 +207,11 @@ export async function redo(): Promise<number> {
     });
     console.log(
       pc.green(
-        `✔ Put back ${files.length} file${files.length === 1 ? '' : 's'} as they were before "${last.label}".`,
+        `✔ Put back ${done} file${done === 1 ? '' : 's'} as they were before "${last.label}".`,
       ),
     );
-    for (const f of files) console.log(pc.dim(`  ${f}`));
-    return 0;
+    for (const f of plan.files) if (!skipped.includes(f.path)) console.log(pc.dim(`  ${f.path}`));
+    return skipped.length > 0 ? 1 : 0;
   } finally {
     db.close();
   }
