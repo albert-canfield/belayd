@@ -25,7 +25,7 @@
   "author": "Albert Canfield",
   "type": "module",
   "bin": {
-    "belayd": "./dist/bin.js"
+    "belayd": "dist/bin.js"
   },
   "files": [
     "dist",
