@@ -12,21 +12,6 @@ export interface UiState {
   startedAt: number;
 }
 
-/** The secret that unlocks the local approval page. Readable only by you (mode 600). */
-export function uiToken(belaydHome: string): string {
-  const file = path.join(belaydHome, 'ui-token');
-  try {
-    const existing = fs.readFileSync(file, 'utf8').trim();
-    if (/^[a-f0-9]{64}$/.test(existing)) return existing;
-  } catch {
-    // create it below
-  }
-  const token = crypto.randomBytes(32).toString('hex');
-  fs.mkdirSync(belaydHome, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, token, { mode: 0o600 });
-  return token;
-}
-
 export function readUiState(belaydHome: string): UiState | undefined {
   try {
     const state = JSON.parse(fs.readFileSync(path.join(belaydHome, 'ui.json'), 'utf8')) as UiState;
@@ -55,10 +40,6 @@ function readUiStateRaw(belaydHome: string): UiState | undefined {
   }
 }
 
-export function uiUrl(state: UiState, token?: string): string {
-  return `http://127.0.0.1:${state.port}/${token ? `?t=${token}` : ''}`;
-}
-
 /** Starts the approval page in the background unless it is already running. */
 export function ensureUiServer(opts: {
   belaydHome: string;
@@ -78,4 +59,37 @@ export function ensureUiServer(opts: {
   );
   child.on('error', () => {});
   child.unref();
+}
+
+const LINK_TTL_MS = 2 * 60_000;
+
+/**
+ * A one-time key for the link `belayd ui` opens. It works once, for two minutes, and is
+ * then swapped for a random session cookie, so nothing long-lived ends up in browser
+ * history or on a command line.
+ */
+export function createLinkKey(belaydHome: string): string {
+  const key = crypto.randomBytes(24).toString('hex');
+  const dir = path.join(belaydHome, 'ui-links');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, key), String(Date.now() + LINK_TTL_MS), { mode: 0o600 });
+  return key;
+}
+
+/** Uses up a link key. True only the first time, and only before it expires. */
+export function consumeLinkKey(belaydHome: string, key: string): boolean {
+  if (!/^[a-f0-9]{48}$/.test(key)) return false;
+  const file = path.join(belaydHome, 'ui-links', key);
+  let expires: number;
+  try {
+    expires = Number(fs.readFileSync(file, 'utf8'));
+    fs.rmSync(file);
+  } catch {
+    return false;
+  }
+  return Date.now() < expires;
+}
+
+export function linkUrl(state: UiState, key: string): string {
+  return `http://127.0.0.1:${state.port}/?k=${key}`;
 }

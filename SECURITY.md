@@ -48,7 +48,7 @@ When an agent cannot show its own prompt (`claude -p`, Codex, Cursor, the MCP ga
 
 ## The approval page
 
-`belayd ui` serves a page on `127.0.0.1` only. It needs a 256-bit key stored in `~/.belayd/ui-token` (readable only by you), sets a `SameSite=Strict`, `HttpOnly` cookie, requires a custom header on every request that changes anything, checks the `Origin` header, and rejects requests whose `Host` header is not `127.0.0.1` or `localhost` to stop DNS rebinding. The page has a strict Content-Security-Policy and loads nothing from the network.
+`belayd ui` serves a page on `127.0.0.1` only. Each `belayd ui` creates a one-time link key that works once, for two minutes, and is swapped for a random session cookie held only in the server's memory, so nothing long-lived ends up in browser history. The cookie is `SameSite=Strict` and `HttpOnly`. The server requires a custom header on every request that changes anything, checks the `Origin` header, and rejects requests whose `Host` header is not `127.0.0.1` or `localhost` to stop DNS rebinding. The page has a strict Content-Security-Policy and loads nothing from the network.
 
 ## Data
 

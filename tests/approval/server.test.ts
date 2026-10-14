@@ -5,25 +5,27 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { serve } from '../../src/approval/server.js';
 import { createRequest, newId, readDecision } from '../../src/approval/store.js';
-import { readUiState, uiToken } from '../../src/approval/ui-state.js';
+import { createLinkKey, readUiState } from '../../src/approval/ui-state.js';
 
 let home: string;
 let server: Awaited<ReturnType<typeof serve>>;
 let base: string;
-let token: string;
+let session: string;
 
 beforeEach(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'belayd-ui-'));
   server = await serve({ belaydHome: home, port: 0 });
   base = `http://127.0.0.1:${server.port}`;
-  token = uiToken(home);
+  // Sign in the way a person does: open a one-time link from belayd ui.
+  const res = await fetch(`${base}/?k=${createLinkKey(home)}`, { redirect: 'manual' });
+  session = /belayd_ui=([a-f0-9]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1] ?? '';
 });
 afterEach(async () => {
   await server.close();
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-const cookie = () => `belayd_ui=${token}`;
+const cookie = () => `belayd_ui=${session}`;
 const pending = () => {
   const id = newId();
   createRequest(home, {
@@ -57,14 +59,17 @@ describe('approval page server', () => {
     expect((await fetch(`${base}/api/state`)).status).toBe(401);
   });
 
-  it('rejects a wrong key in the link', async () => {
-    expect((await fetch(`${base}/?t=nope`, { redirect: 'manual' })).status).toBe(403);
+  it('rejects a made-up link key', async () => {
+    expect((await fetch(`${base}/?k=${'a'.repeat(48)}`, { redirect: 'manual' })).status).toBe(403);
   });
 
-  it('trades the key in the link for a strict cookie', async () => {
-    const res = await fetch(`${base}/?t=${token}`, { redirect: 'manual' });
+  it('trades a link key for a strict session cookie, once', async () => {
+    const key = createLinkKey(home);
+    const res = await fetch(`${base}/?k=${key}`, { redirect: 'manual' });
     expect(res.status).toBe(303);
     expect(res.headers.get('set-cookie')).toMatch(/HttpOnly; SameSite=Strict/);
+    expect(res.headers.get('set-cookie')).not.toContain(key);
+    expect((await fetch(`${base}/?k=${key}`, { redirect: 'manual' })).status).toBe(403);
   });
 
   it('serves the page with a strict content security policy', async () => {

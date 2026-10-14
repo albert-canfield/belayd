@@ -3,7 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pc from 'picocolors';
 import { serve } from '../approval/server.js';
-import { DEFAULT_PORT, ensureUiServer, readUiState, uiToken, uiUrl } from '../approval/ui-state.js';
+import {
+  createLinkKey,
+  DEFAULT_PORT,
+  ensureUiServer,
+  linkUrl,
+  readUiState,
+} from '../approval/ui-state.js';
 import { loadPolicy } from '../policy/load.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
@@ -35,9 +41,13 @@ export async function ui(opts: UiOptions): Promise<number> {
     return 1;
   }
 
-  const url = uiUrl(state, uiToken(home));
+  const url = linkUrl(state, createLinkKey(home));
   console.log(`${pc.green('✔')} Approval page: ${pc.cyan(url)}`);
-  console.log(pc.dim('  Keep it open. Requests appear there while agents wait for an answer.'));
+  console.log(
+    pc.dim(
+      '  The link works once, for two minutes. Keep the page open; requests appear there while agents wait.',
+    ),
+  );
   if (opts.open !== false) openBrowser(url);
   return 0;
 }

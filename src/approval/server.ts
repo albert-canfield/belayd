@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import { renderPage } from './page.js';
 import { decide, listPending, type ApprovalRequest } from './store.js';
-import { clearUiState, uiToken, writeUiState } from './ui-state.js';
+import { clearUiState, consumeLinkKey, writeUiState } from './ui-state.js';
 
 export interface ServeOptions {
   belaydHome: string;
@@ -30,7 +30,8 @@ const COOKIE = 'belayd_ui';
  * header on every write stops cross-site requests.
  */
 export async function serve(opts: ServeOptions): Promise<{ port: number; close(): Promise<void> }> {
-  const token = uiToken(opts.belaydHome);
+  /** Session cookies handed out in exchange for a one-time link key. In memory only. */
+  const sessions = new Set<string>();
   const recent: RecentItem[] = [];
   let known = new Map<string, ApprovalRequest>();
   let lastActivity = Date.now();
@@ -78,14 +79,17 @@ export async function serve(opts: ServeOptions): Promise<{ port: number; close()
     }
 
     const url = new URL(req.url ?? '/', `http://${host}`);
-    const authed = safeEqual(cookie(req.headers.cookie, COOKIE), token);
+    const presented = cookie(req.headers.cookie, COOKIE);
+    const authed = [...sessions].some((s) => safeEqual(presented, s));
 
     if (req.method === 'GET' && url.pathname === '/') {
-      const t = url.searchParams.get('t');
-      if (t !== null) {
-        if (!safeEqual(t, token)) return send(403, page401(), 'text/html');
+      const k = url.searchParams.get('k');
+      if (k !== null) {
+        if (!consumeLinkKey(opts.belaydHome, k)) return send(403, page401(), 'text/html');
+        const session = crypto.randomBytes(32).toString('hex');
+        sessions.add(session);
         return send(303, '', 'text/plain', {
-          'Set-Cookie': `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`,
+          'Set-Cookie': `${COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/`,
           Location: '/',
         });
       }
@@ -219,7 +223,7 @@ function safeEqual(a: string, b: string): boolean {
 function page401(): string {
   return `<!doctype html><meta charset="utf-8"><title>belayd</title>
 <body style="font:16px system-ui;margin:4rem auto;max-width:32rem;padding:0 1rem;color:#44403c">
-<h1 style="font-size:1.25rem">This page needs its key</h1>
-<p>Run <code>belayd ui</code> in a terminal. It opens this page with the key that unlocks it.</p>
+<h1 style="font-size:1.25rem">This page needs a fresh link</h1>
+<p>Run <code>belayd ui</code> in a terminal. It opens this page with a one-time link that unlocks it.</p>
 </body>`;
 }

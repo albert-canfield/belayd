@@ -88,6 +88,7 @@ rules:
     match:
       path:
         - '{belayd_home}/ui-token'
+        - '{belayd_home}/ui-links/**'
         - '{belayd_home}/approvals/**'
         - '{belayd_home}/ui.json'
         - '{belayd_home}/trusted.json'
