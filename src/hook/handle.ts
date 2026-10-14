@@ -210,7 +210,9 @@ export async function handleToolHook(
       canAskNatively: dialect.canAskNatively(agent, deps.env),
       binPath: deps.binPath ?? process.argv[1] ?? '',
     });
-    if (resolution.verdict !== 'deny') watchdog.stop();
+    // Only a call that is cleared to run: an `ask` shown by the agent itself must still
+    // be answered in time, or the agent falls back to its own permission mode.
+    if (resolution.verdict === 'allow') watchdog.stop();
     const snapshot =
       resolution.verdict === 'deny'
         ? undefined

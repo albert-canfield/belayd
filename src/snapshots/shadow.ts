@@ -310,9 +310,11 @@ export class Shadow {
     return this.locked(() => {
       const unsafe = (f: string) => this.beyondSymlink(f) || !this.inside(f);
       const skipped = files.filter(unsafe);
-      const safe = files.filter((f) => !skipped.includes(f));
+      const unsafeSet = new Set(skipped);
+      const safe = files.filter((f) => !unsafeSet.has(f));
       const present = safe.filter((f) => this.blobAt(tree, f));
-      const absent = safe.filter((f) => !present.includes(f));
+      const presentSet = new Set(present);
+      const absent = safe.filter((f) => !presentSet.has(f));
       // Deletions come first, each checked again right before it happens: a checkout
       // can turn a folder back into a symlink, and a later delete must not follow it.
       for (const f of absent) {
@@ -331,7 +333,8 @@ export class Shadow {
         this.git(['update-index', '-q', '--force-remove', '--', f]);
       }
       const checkout = present.filter((f) => !unsafe(f));
-      skipped.push(...present.filter((f) => !checkout.includes(f)));
+      const checkoutSet = new Set(checkout);
+      skipped.push(...present.filter((f) => !checkoutSet.has(f)));
       if (checkout.length > 0) {
         this.git(
           ['checkout', tree, '--pathspec-from-file=-', '--pathspec-file-nul'],
@@ -413,7 +416,8 @@ export class Shadow {
     const present = paths.filter(
       (p) => !this.beyondSymlink(p) && exists(path.join(this.workspace, p)),
     );
-    const missing = paths.filter((p) => !present.includes(p));
+    const presentSet = new Set(present);
+    const missing = paths.filter((p) => !presentSet.has(p));
     if (present.length > 0) {
       this.git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], present.join('\0'));
     }
