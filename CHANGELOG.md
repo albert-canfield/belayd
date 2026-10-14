@@ -2,7 +2,7 @@
 
 ## 0.1.0 (unreleased)
 
-The first release. belayd sits between AI coding agents and your machine: one policy, one audit trail and one undo button for Claude Code, Codex and MCP servers.
+The first release. belayd sits between AI coding agents and your machine: one policy, one audit trail and one undo button for Claude Code, Codex, Copilot CLI, Gemini CLI and MCP servers.
 
 ### Policy
 
@@ -21,7 +21,11 @@ The first release. belayd sits between AI coding agents and your machine: one po
 
 - Claude Code: PreToolUse and PostToolUse hooks, the native prompt in interactive sessions, held approvals in `claude -p`. Installs with `onFailure: "block"` on Claude Code 2.1.295 and later, and a crash guard on older versions.
 - Codex CLI: hooks with held approvals (Codex cannot ask from a hook), `apply_patch` checked file by file.
-- Cursor: covered through the Claude Code hooks it loads.
+- Copilot CLI: its own hooks, with held approvals (it refuses to ask in `copilot -p`).
+- Gemini CLI: `BeforeTool` and `AfterTool` hooks, with held approvals (its hooks cannot ask).
+- Cursor and the Claude desktop app: covered through the Claude Code hooks they run. The ChatGPT desktop app: covered through the Codex hooks it reads from `~/.codex`.
+- Ollama: agents started with `ollama launch` (Claude Code, Codex, Copilot CLI) run their own belayd hooks.
+- Every agent is an adapter in one registry, and a shared test suite holds them all to the same behaviour.
 - MCP: `belayd mcp` runs any stdio MCP server behind the policy; `belayd mcp wrap` rewrites a config file.
 
 ### Approvals
