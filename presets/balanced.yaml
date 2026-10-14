@@ -241,18 +241,16 @@ rules:
 
   - id: ask-discard-work
     match:
-      command:
-        - git reset
-        - git clean
-        - git checkout
-        - git restore
-        - git stash
-      # --staged only unstages, unless --worktree comes with it (the next rule).
-      args:
-        {
-          any: [--hard, -f, --force, -fd, -fdx, -fx, '.', drop, clear, --worktree, -W],
-          none: [--staged, -S],
-        }
+      command: [git reset, git clean, git checkout, git stash]
+      args: { any: [--hard, -f, --force, -fd, -fdx, -fx, '.', drop, clear] }
+    decision: ask
+    reason: Throws away uncommitted work.
+
+  # git restore --staged only unstages, unless --worktree comes with it.
+  - id: ask-discard-restore
+    match:
+      command: git restore
+      args: { any: ['.', --worktree, -W], none: [--staged, -S] }
     decision: ask
     reason: Throws away uncommitted work.
 
