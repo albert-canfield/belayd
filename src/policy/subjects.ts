@@ -69,7 +69,7 @@ const NETWORK_SENDERS = new Set([
  * in npm but is a plain flag (`--workspace-root`) in pnpm and bun.
  */
 const PACKAGE_MANAGER_OPTIONS: Record<string, Set<string>> = {
-  npm: new Set(['--prefix', '-w', '--workspace']),
+  npm: new Set(['--prefix', '-C', '-w', '--workspace']),
   pnpm: new Set(['-C', '--dir', '--filter', '-F']),
   yarn: new Set(['--cwd']),
   bun: new Set(['--cwd', '--filter']),
@@ -142,6 +142,8 @@ const LISTS_ONLY = new Set([
   'cd',
   'pushd',
 ]);
+/** Programs that can send a file's contents over the network. */
+const UPLOADERS = new Set(['curl', 'wget', 'http', 'https', 'xh']);
 /** Programs whose first positional is a mode or owner, and change the rest. */
 const WRITES_AFTER_FIRST = new Set(['chmod', 'chown', 'chgrp']);
 /** Programs that change only their last path argument (the destination). */
@@ -341,21 +343,25 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
   const resolve = (p: string): string[] => {
     if (SPECIAL_FILES.test(p)) return [];
     const out: string[] = [];
-    const full = inv.remote && !p.startsWith('/') ? undefined : resolveIn(inv.cwd, p, ctx.home);
-    if (full === undefined) {
-      unresolved = true;
-      return out;
-    }
-    // `rm -rf /*` deletes everything in `/`, so the folder before the first glob counts too.
-    const glob = full.search(GLOB_CHARS);
-    if (glob >= 0) {
-      out.push(full);
-      const dir = path.dirname(full.slice(0, glob + 1));
-      out.push(...bothForms(dir));
-      // `cat .e*` reads .env: check the glob against secret file names.
-      out.push(...secretProbes(dir, path.relative(dir, full)).flatMap(bothForms));
-    } else {
-      out.push(...bothForms(full));
+    // When a branch left the folder as one of a few, the path is each of them.
+    const folders = inv.cwd !== undefined ? [inv.cwd] : (inv.cwdChoices ?? [undefined]);
+    for (const folder of folders) {
+      const full = inv.remote && !p.startsWith('/') ? undefined : resolveIn(folder, p, ctx.home);
+      if (full === undefined) {
+        unresolved = true;
+        continue;
+      }
+      // `rm -rf /*` deletes everything in `/`, so the folder before the first glob counts too.
+      const glob = full.search(GLOB_CHARS);
+      if (glob >= 0) {
+        out.push(full);
+        const dir = path.dirname(full.slice(0, glob + 1));
+        out.push(...bothForms(dir));
+        // `cat .e*` reads .env: check the glob against secret file names.
+        out.push(...secretProbes(dir, path.relative(dir, full)).flatMap(bothForms));
+      } else {
+        out.push(...bothForms(full));
+      }
     }
     return out;
   };
@@ -407,6 +413,32 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     resolved.forEach((p) => paths.add(p));
     if (r.op.includes('>')) resolved.forEach((p) => writes.add(p));
     else resolved.forEach((p) => explicitReads.add(p));
+  }
+
+  // `curl -d @.env`, `curl -F f=@.env`, `curl -T .env` and `wget --post-file=.env`
+  // read a file and send it.
+  if (program && UPLOADERS.has(program)) {
+    for (let i = 0; i < raw.length; i++) {
+      const a = raw[i]!;
+      const next = raw[i + 1];
+      let file: string | undefined;
+      const eq = /^--(?:data[a-z-]*|form[a-z-]*|post-file|body-file|upload-file)=(.+)$/.exec(a);
+      if (eq) file = eq[1];
+      else if (
+        /^(-d|--data[a-z-]*|-F|--form[a-z-]*|-T|--upload-file|--post-file|--body-file)$/.test(a)
+      )
+        file = next;
+      if (file === undefined) continue;
+      // -d @file and -F name=@file or name=<file name a file; -T and --post-file always do.
+      const m = /^(?:[^=@<]*=)?[@<](.+)$/.exec(file);
+      const target = m
+        ? m[1]!.replace(/;.*$/, '')
+        : /^(-T|--upload-file|--post-file|--body-file)/.test(a)
+          ? file
+          : undefined;
+      if (target && target !== '-')
+        resolve(target).forEach((p) => (explicitReads.add(p), paths.add(p)));
+    }
   }
 
   // `git show HEAD:.env` and `git cat-file -p rev:path` read a file from history.

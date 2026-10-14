@@ -37,6 +37,8 @@ export interface Invocation {
   text: string;
   /** Working directory, or undefined when an earlier `cd` made it unknowable. */
   cwd: string | undefined;
+  /** When `cwd` is undefined because branches disagree: the folders it can be. */
+  cwdChoices?: string[];
   /** The program, or the code it runs, cannot be known statically. */
   dynamic: boolean;
   /** At least one argument could not be resolved (variables, `$(...)`, stdin from xargs). */
@@ -80,6 +82,8 @@ export interface AnalyzeOptions {
 
 const MAX_DEPTH = 6;
 const MAX_ALTERNATIVES = 64;
+/** How many candidate folders or values a variable may keep after branches. */
+const MAX_CHOICES = 8;
 /** Limits that keep the analysis fast whatever the input; past them, belayd asks. */
 const MAX_SOURCE_CHARS = 1_000_000;
 const MAX_INVOCATIONS = 5_000;
@@ -246,6 +250,23 @@ const PASSTHROUGH = new Set([
   'firejail',
 ]);
 const AWKS = new Set(['awk', 'gawk', 'mawk', 'nawk']);
+/** Programs that cannot write files, so a venv's activate script is still the one it wrote. */
+const KEEPS_GENERATED = new Set([
+  'cd',
+  'pushd',
+  'popd',
+  'source',
+  '.',
+  'echo',
+  'printf',
+  'true',
+  ':',
+  'test',
+  '[',
+  'pwd',
+  'ls',
+  'which',
+]);
 /**
  * tmux commands whose arguments are a shell command, or keys typed into a shell, with
  * the option letters that take a value for each.
@@ -300,6 +321,10 @@ interface EvalWord {
    * or removed it (an empty `$X`): one list of words per alternative in `values`.
    */
   fields?: string[][];
+  /** Unknown only because of environment variables (`$JAVA_HOME/bin/java`). */
+  envOnly?: boolean;
+  /** Its several values are what a variable may hold, not words that all run. */
+  choice?: boolean;
 }
 
 interface Scope {
@@ -316,6 +341,15 @@ interface Scope {
   generated: Set<string>;
   /** Functions defined so far, checked again at each call with that call's arguments. */
   functions: Map<string, { body: AnyNode; src: string }>;
+  /** When `cwd` is undefined because branches disagree: the folders it can be. */
+  cwdChoices?: string[];
+  /** Variables that branches left holding one of a few known values. */
+  choices: Map<string, string[]>;
+  /**
+   * Variables whose value is unknown but which certainly name this program, like
+   * JAVACMD in gradlew: `$JAVA_HOME/bin/java` in one branch and `java` in the other.
+   */
+  programs: Map<string, string>;
 }
 
 interface Ctx {
@@ -348,6 +382,8 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     written: new Set(),
     generated: new Set(),
     functions: new Map(),
+    programs: new Map(),
+    choices: new Map(),
   };
   analyzer.source(command, scope, { depth: 0, via: [], remote: false }, undefined);
   return { invocations: analyzer.out, errors: analyzer.errors };
@@ -410,7 +446,8 @@ class Analyzer {
   ): void {
     for (const st of list) {
       if (this.exhausted) return;
-      this.node(st.command, src, scope, ctx, stdin);
+      // `cmd &` runs in a background subshell: what it changes stays there.
+      this.node(st.command, src, st.background ? cloneScope(scope) : scope, ctx, stdin);
     }
   }
 
@@ -423,9 +460,18 @@ class Analyzer {
     const before = this.out.length;
     let stdout: string | undefined;
     switch (n.type) {
-      case 'AndOr':
-        for (const c of n.commands) this.node(c, src, scope, ctx);
+      case 'AndOr': {
+        // Each command after the first runs only if the ones before went a certain way.
+        // Inside the list, state flows on; after it, the list may have stopped anywhere.
+        const work = cloneScope(scope);
+        const exits: Scope[] = [];
+        n.commands.forEach((c, i) => {
+          this.node(c, src, work, ctx);
+          if (i < n.commands.length - 1) exits.push(cloneScope(work));
+        });
+        this.merge(scope, [...exits, work]);
         break;
+      }
       case 'Pipeline':
         stdout = this.pipeline(n, src, scope, ctx);
         break;
@@ -445,29 +491,52 @@ class Analyzer {
       case 'CompoundList':
         this.compoundList(n, src, scope, ctx);
         break;
-      case 'If':
+      case 'If': {
         this.compoundList(n.clause, src, scope, ctx);
-        this.compoundList(n.then, src, scope, ctx);
-        if (n.else) this.node(n.else, src, scope, ctx);
+        const yes = cloneScope(scope);
+        const no = cloneScope(scope);
+        this.compoundList(n.then, src, yes, ctx);
+        if (n.else) this.node(n.else, src, no, ctx);
+        this.merge(scope, [yes, no]);
         break;
+      }
       case 'For':
-      case 'Select':
+      case 'Select': {
         for (const w of n.wordlist ?? []) this.evalWord(w, src, scope, ctx);
-        scope.vars.set(n.name.value, null);
-        this.compoundList(n.body, src, scope, ctx);
+        // The body runs any number of times, maybe none.
+        const body = cloneScope(scope);
+        body.vars.set(n.name.value, null);
+        body.programs.delete(n.name.value);
+        body.choices.delete(n.name.value);
+        this.compoundList(n.body, src, body, ctx);
+        this.merge(scope, [cloneScope(scope), body]);
         break;
-      case 'ArithmeticFor':
+      }
+      case 'ArithmeticFor': {
         this.substitutionsIn([n.initialize, n.test, n.update], src, scope, ctx);
-        this.compoundList(n.body, src, scope, ctx);
+        const body = cloneScope(scope);
+        this.compoundList(n.body, src, body, ctx);
+        this.merge(scope, [cloneScope(scope), body]);
         break;
-      case 'While':
+      }
+      case 'While': {
         this.compoundList(n.clause, src, scope, ctx);
-        this.compoundList(n.body, src, scope, ctx);
+        const body = cloneScope(scope);
+        this.compoundList(n.body, src, body, ctx);
+        this.merge(scope, [cloneScope(scope), body]);
         break;
-      case 'Case':
+      }
+      case 'Case': {
         this.evalWord(n.word, src, scope, ctx);
-        for (const item of n.items) this.compoundList(item.body, src, scope, ctx);
+        const outcomes = [cloneScope(scope)]; // no pattern matched
+        for (const item of n.items) {
+          const arm = cloneScope(scope);
+          this.compoundList(item.body, src, arm, ctx);
+          outcomes.push(arm);
+        }
+        this.merge(scope, outcomes);
         break;
+      }
       case 'TestCommand':
       case 'ArithmeticCommand':
         this.substitutionsIn([n.expression], src, scope, ctx);
@@ -483,15 +552,11 @@ class Analyzer {
         }
         break;
       }
-      case 'Function': {
-        // Checked where it is defined, knowing nothing of its arguments, and again at
-        // each call with the arguments that call gives it.
+      case 'Function':
+        // Defining a function runs nothing. Its body is checked at each call, with the
+        // arguments and state of that call.
         scope.functions.set(n.name.value ?? n.name.text, { body: n.body, src });
-        const inner = cloneScope(scope);
-        delete inner.positional;
-        this.node(n.body, src, inner, ctx);
         break;
-      }
       case 'Coproc':
         this.node(n.body, src, cloneScope(scope), ctx);
         break;
@@ -529,7 +594,20 @@ class Analyzer {
   ): string | undefined {
     const text = src.slice(cmd.pos, cmd.end);
     const words: EvalWord[] = [];
-    if (cmd.name) words.push(...expandWord(this.evalWord(cmd.name, src, scope, ctx)));
+    // A command name a branch left as one of a few values: each of them is checked as
+    // the command, rather than the others becoming its arguments.
+    let otherHeads: EvalWord[][] = [];
+    if (cmd.name) {
+      const name = this.evalWord(cmd.name, src, scope, ctx);
+      if (name.choice && name.values.length > 1) {
+        const heads = (name.fields ?? name.values.map((v) => [v])).map((alt) =>
+          alt.map((value) => ({ ...name, value, values: [value], fields: undefined })),
+        );
+        words.push(...heads[0]!);
+        otherHeads = heads.slice(1);
+      } else words.push(...expandWord(name));
+    }
+    const nameWords = words.length;
     const assignments: { name: string; value: EvalWord }[] = [];
     for (const arg of cmd.args) {
       if (arg.type === 'Word') words.push(...expandWord(this.evalWord(arg, src, scope, ctx)));
@@ -566,8 +644,7 @@ class Analyzer {
 
     if (words.length === 0) {
       // A bare assignment (`X=rm`) updates the scope. A bare redirect truncates a file.
-      for (const a of prefixAssignments)
-        scope.vars.set(a.name, a.value.resolved ? a.value.value : null);
+      for (const a of prefixAssignments) this.assign(scope, a.name, a.value);
       if (redirects.length > 0) this.push({ ...this.base(text, scope, ctx), redirects });
       return undefined;
     }
@@ -575,6 +652,16 @@ class Analyzer {
     const effectiveStdin: StdinInfo | undefined =
       inline !== undefined ? { producers: [], text: inline } : stdin;
     const program = this.invoke(words, text, scope, ctx, effectiveStdin, redirects);
+    for (const head of otherHeads)
+      if (head.length > 0)
+        this.invoke(
+          [...head, ...words.slice(nameWords)],
+          text,
+          cloneScope(scope),
+          ctx,
+          effectiveStdin,
+          redirects,
+        );
     this.trackWrites(program, words, redirects, scope);
 
     // Track state that later commands depend on.
@@ -582,55 +669,90 @@ class Analyzer {
       case 'cd':
       case 'pushd': {
         const target = words.slice(1).find((w) => !w.value.startsWith('-'));
-        if (!target) scope.cwd = this.opts.home;
-        else if (!target.resolved) scope.cwd = undefined;
-        else scope.cwd = resolveIn(scope.cwd, target.value, this.opts.home);
+        const from = scope.cwd !== undefined ? [scope.cwd] : (scope.cwdChoices ?? [undefined]);
+        const to = !target
+          ? [this.opts.home]
+          : target.resolved
+            ? from.map((f) => resolveIn(f, target.value, this.opts.home))
+            : [undefined];
+        this.setCwd(scope, to);
         break;
       }
       case 'popd':
-        scope.cwd = undefined;
+        this.setCwd(scope, [undefined]);
         break;
       case 'export':
       case 'declare':
       case 'typeset':
       case 'local':
       case 'readonly':
-        for (const a of assignments)
-          scope.vars.set(a.name, a.value.resolved ? a.value.value : null);
+        for (const a of assignments) this.assign(scope, a.name, a.value);
         break;
       case 'shift': {
         // `shift` and `shift 2` move the arguments along; anything else makes them unknown.
+        // Shifting past the end fails and leaves them as they were.
         const n = words[1] ? words[1].value : '1';
-        if (scope.positional && (words[1]?.resolved ?? true) && /^\d+$/.test(n))
-          scope.positional = scope.positional.slice(Number(n));
-        else delete scope.positional;
+        if (!scope.positional) break;
+        if ((words[1]?.resolved ?? true) && /^\d+$/.test(n)) {
+          if (Number(n) <= scope.positional.length)
+            scope.positional = scope.positional.slice(Number(n));
+        } else delete scope.positional;
         break;
       }
       case 'set': {
-        // `set -- a b` replaces the arguments. Plain options (`set -euo pipefail`) do not.
+        // Like bash: option words come first (one containing `o` takes the next word as
+        // an option name), and the arguments start at the first other word, `--` or `-`.
         const rest = words.slice(1);
-        const dashes = rest.findIndex((w) => w.value === '--');
-        const values =
-          dashes >= 0
-            ? rest.slice(dashes + 1)
-            : rest.filter(
-                (w, i) => !/^[-+]/.test(w.value) && !/^[-+]o$/.test(rest[i - 1]?.value ?? ''),
-              );
-        if (dashes < 0 && values.length === 0) break;
-        if (values.every((w) => w.resolved)) scope.positional = values.map((w) => w.value);
+        let start: number | undefined;
+        for (let i = 0; i < rest.length; i++) {
+          const w = rest[i]!;
+          if (!w.resolved) {
+            start = -1;
+            break;
+          }
+          if (w.value === '--' || w.value === '-') {
+            start = i + 1;
+            break;
+          }
+          if (/^[-+]./.test(w.value)) {
+            if (w.value.slice(1).includes('o')) i++;
+            continue;
+          }
+          start = i;
+          break;
+        }
+        if (start === undefined) break; // only options: the arguments stay
+        const values = start < 0 ? [] : rest.slice(start);
+        if (start >= 0 && values.every((w) => w.resolved))
+          scope.positional = values.map((w) => w.value);
         else delete scope.positional;
         break;
       }
       case 'getopts':
         delete scope.positional;
         break;
-      case 'unset':
-        for (const w of words.slice(1)) scope.vars.delete(w.value);
+      case 'unset': {
+        const functions = words.some((w) => w.value === '-f');
+        for (const w of words.slice(1)) {
+          if (w.value.startsWith('-')) continue;
+          if (functions) scope.functions.delete(w.value);
+          else {
+            scope.vars.delete(w.value);
+            scope.programs.delete(w.value);
+            scope.choices.delete(w.value);
+          }
+        }
         break;
+      }
       case 'read':
       case 'mapfile':
       case 'readarray':
-        for (const w of words.slice(1)) if (!w.value.startsWith('-')) scope.vars.set(w.value, null);
+        for (const w of words.slice(1))
+          if (!w.value.startsWith('-')) {
+            scope.vars.set(w.value, null);
+            scope.programs.delete(w.value);
+            scope.choices.delete(w.value);
+          }
         break;
       case 'alias':
         for (const a of assignments) if (a.value.resolved) scope.aliases.set(a.name, a.value.value);
@@ -661,7 +783,9 @@ class Analyzer {
     const head = words[0]!;
     const args = words.slice(1);
     const base = this.base(text, scope, ctx);
-    if (!head.resolved) {
+    // `"$JAVA_HOME/bin/java"` runs java, wherever the user's environment points.
+    const known = this.programOf(head, scope);
+    if (!head.resolved && !known) {
       this.push({
         ...base,
         argv: words.map((w) => w.value),
@@ -675,9 +799,14 @@ class Analyzer {
     }
 
     // In zsh, the default shell on macOS, `=rm` expands to the path of rm.
-    const program = programName(
-      head.text.startsWith('=') && head.value.length > 1 ? head.value.slice(1) : head.value,
-    );
+    const program =
+      known ??
+      programName(
+        head.text.startsWith('=') && head.value.length > 1 ? head.value.slice(1) : head.value,
+      );
+
+    // Any other program could rewrite a generated activate script before it is sourced.
+    if (!KEEPS_GENERATED.has(program)) scope.generated.clear();
 
     const alias = scope.aliases.get(head.value);
     if (alias !== undefined && ctx.depth < MAX_DEPTH) {
@@ -701,11 +830,17 @@ class Analyzer {
     };
 
     // A function call runs the function's body, in this shell, with its own arguments.
+    // The call is then also checked as the command it names, so a function called
+    // `bash` or `eval` cannot hide what `command bash -c ...` would run.
     const fn = scope.functions.get(head.value);
-    if (fn) {
-      inv.via = [...inv.via, 'function'];
-      this.push(inv);
-      if (ctx.functions?.includes(head.value) || ctx.depth >= MAX_DEPTH) return program;
+    // A recursive call is already being checked; one nested too deeply is not followed.
+    if (fn && !ctx.functions?.includes(head.value) && ctx.depth >= MAX_DEPTH) {
+      inv.dynamic = true;
+      inv.note = `calls ${head.value}, nested too deeply to check`;
+    }
+    if (fn && !ctx.functions?.includes(head.value) && ctx.depth < MAX_DEPTH) {
+      this.budget -= fn.body.end - fn.body.pos + 16;
+      if (this.budget < 0) this.exhaust(base);
       const callerArgs = scope.positional;
       if (args.every((w) => w.resolved)) scope.positional = args.map((w) => w.value);
       else delete scope.positional;
@@ -717,7 +852,6 @@ class Analyzer {
       });
       if (callerArgs) scope.positional = callerArgs;
       else delete scope.positional;
-      return program;
     }
     let directScript: EvalWord | undefined;
     if (head.value.includes('/')) {
@@ -786,9 +920,19 @@ class Analyzer {
       }
       case 'xargs': {
         const rest = skipOptions(args, VALUE_OPTIONS.xargs);
-        const inner = rest.length > 0 ? rest : [literal('echo')];
+        // With -I, each item replaces the placeholder instead of going at the end.
+        let placeholder: string | undefined;
+        args.forEach((w, k) => {
+          if (w.value === '-I') placeholder = args[k + 1]?.value;
+          else if (w.value === '-i' || w.value === '--replace') placeholder = '{}';
+          else if (w.value.startsWith('--replace=')) placeholder = w.value.slice(10);
+          else if (/^-I./.test(w.value)) placeholder = w.value.slice(2);
+        });
+        const inner = (rest.length > 0 ? rest : [literal('echo')]).map((w) =>
+          placeholder && w.value.includes(placeholder) ? unknownWord(w.value) : w,
+        );
         this.invoke(
-          [...inner, unknownWord('<items from stdin>')],
+          placeholder ? inner : [...inner, unknownWord('<items from stdin>')],
           text,
           scope,
           nested('xargs'),
@@ -812,15 +956,27 @@ class Analyzer {
         return program;
       }
       case 'tmux': {
-        // `tmux -c cmd` (before any tmux command) runs cmd in a shell.
-        const sub = args.findIndex((w) => !w.value.startsWith('-'));
-        const c = args.findIndex((w, i) => w.value === '-c' && (sub < 0 || i < sub));
-        if (c >= 0) {
-          this.codeString(args.slice(c + 1, c + 2), text, scope, nested('tmux -c'), undefined);
-          return program;
+        // tmux's own options come first; `-c cmd` among them runs cmd in a shell.
+        let first = 0;
+        for (; first < args.length; first++) {
+          const v = args[first]!.value;
+          if (!v.startsWith('-') || v === '-') break;
+          if (v === '--') {
+            first++;
+            break;
+          }
+          const at = v.slice(1).search(/[cfLST]/);
+          if (at < 0) continue;
+          const letter = v[at + 1]!;
+          const attached = v.slice(at + 2);
+          const value = attached ? { ...args[first]!, value: attached } : args[++first];
+          if (letter === 'c' && value) {
+            this.codeString([value], text, scope, nested('tmux -c'), undefined);
+            return program;
+          }
         }
         // `tmux new -d 'rm -rf ~'`, `tmux send-keys 'rm -rf ~' Enter`, also after `;`.
-        for (let i = 0; i < args.length; i++) {
+        for (let i = first; i < args.length; i++) {
           const sub = args[i]!.value;
           if (TMUX_DYNAMIC.has(sub)) {
             inv.dynamic = true;
@@ -867,7 +1023,9 @@ class Analyzer {
             const command = args[i + 1]?.value;
             // `-X screen cmd` opens a window running cmd; exec and eval run more than that.
             if (command === 'screen') {
-              const rest = args.slice(i + 2).filter((w, k) => k > 0 || !w.value.startsWith('-'));
+              // `-X screen -t title 2 cmd args`: options, an optional window number, the command.
+              const rest = getoptPositionals(args.slice(i + 2), 'thT');
+              if (/^\d+$/.test(rest[0]?.value ?? '')) rest.shift();
               if (rest.length > 0) this.invoke(rest, text, scope, nested('screen -X'), stdin, []);
             } else if (command === 'exec' || command === 'eval' || command === 'source') {
               inv.dynamic = true;
@@ -906,7 +1064,11 @@ class Analyzer {
         const rest = skipOptions(args, VALUE_OPTIONS.parallel);
         const sep = rest.findIndex((w) => w.value === ':::' || w.value === '::::');
         const command = sep >= 0 ? rest.slice(0, sep) : rest;
-        const items = sep >= 0 ? rest.slice(sep + 1) : [unknownWord('<items from stdin>')];
+        // `::::` takes the items from files, which belayd does not read.
+        const items =
+          sep >= 0 && rest[sep]!.value === ':::'
+            ? rest.slice(sep + 1)
+            : [unknownWord(sep >= 0 ? '<items from a file>' : '<items from stdin>')];
         // With no command, each item is a command of its own.
         if (command.length === 0) {
           for (const item of items)
@@ -1075,7 +1237,19 @@ class Analyzer {
     }
     const first = args[i];
     if (commandMode) {
-      if (first) this.codeString([first], text, scope, ctx, stdin);
+      if (!first) return;
+      // `bash -c 'code' name a b`: inside, $0 is name and $1, $2 are a and b, not the
+      // caller's.
+      // Functions stay visible: `export -f` hands them to the new shell, and checking a
+      // call against a function as well as the command only makes belayd stricter.
+      const inner = cloneScope(scope);
+      const after = args.slice(i + 1);
+      const zero = after[0];
+      inner.vars.set('0', zero ? (zero.resolved ? zero.value : null) : inv.program);
+      if (after.slice(1).every((w) => w.resolved))
+        inner.positional = after.slice(1).map((w) => w.value);
+      else delete inner.positional;
+      this.codeString([first], text, inner, ctx, stdin);
       return;
     }
     // `sh -s args...` reads its code from stdin and treats the rest as arguments.
@@ -1260,7 +1434,11 @@ class Analyzer {
     }
     if (!dir) return scope;
     const inner = cloneScope(scope);
-    inner.cwd = dir.resolved ? resolveIn(scope.cwd, dir.value, this.opts.home) : undefined;
+    const from = scope.cwd !== undefined ? [scope.cwd] : (scope.cwdChoices ?? [undefined]);
+    this.setCwd(
+      inner,
+      dir.resolved ? from.map((f) => resolveIn(f, dir.value, this.opts.home)) : [undefined],
+    );
     return inner;
   }
 
@@ -1268,10 +1446,18 @@ class Analyzer {
   private trackVirtualenv(program: string, args: EvalWord[], scope: Scope): void {
     const values = args.map((w) => (w.resolved ? w.value : undefined));
     let rest: (string | undefined)[] | undefined;
-    const m = values.indexOf('-m');
-    if (/^python[\d.]*$/.test(program) && m >= 0 && /^(venv|virtualenv)$/.test(values[m + 1] ?? ''))
-      rest = values.slice(m + 2);
-    else if (program === 'virtualenv') rest = values;
+    if (/^python[\d.]*$/.test(program)) {
+      // Only Python's own `-m venv`, before any script or inline code.
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        if (v === undefined || v === '-c' || !v.startsWith('-')) break;
+        if (v === '-m') {
+          if (/^(venv|virtualenv)$/.test(values[i + 1] ?? '')) rest = values.slice(i + 2);
+          break;
+        }
+        if (v === '-W' || v === '-X') i++;
+      }
+    } else if (program === 'virtualenv') rest = values;
     else if (program === 'uv' && values[0] === 'venv') rest = [...values.slice(1), '.venv'];
     const dir = rest?.find((v) => v !== undefined && !v.startsWith('-'));
     const abs = dir ? resolveIn(scope.cwd, dir, this.opts.home) : undefined;
@@ -1579,11 +1765,16 @@ class Analyzer {
       values,
       resolved: r.resolved,
       subPrograms: r.subPrograms,
+      ...(r.envOnly ? { envOnly: true } : {}),
+      ...(r.choice ? { choice: true } : {}),
     };
     if (raw.some((v) => v.includes(FIELD_BREAK)) || (r.bare && raw.every((v) => v === '')))
       result.fields = raw.map((v) => v.split(FIELD_BREAK).filter(Boolean));
     // zsh's `$=X` and `${=X}` split a variable into words where bash would not.
-    if (/\$\{?=/.test(word.text)) result.resolved = false;
+    if (/\$\{?=/.test(word.text)) {
+      result.resolved = false;
+      delete result.envOnly;
+    }
     return result;
   }
 
@@ -1598,9 +1789,24 @@ class Analyzer {
     scope: Scope,
     ctx: Ctx,
     quoted: boolean,
-  ): { alternatives: string[]; resolved: boolean; subPrograms: string[]; bare: boolean } {
+  ): {
+    alternatives: string[];
+    resolved: boolean;
+    subPrograms: string[];
+    bare: boolean;
+    envOnly: boolean;
+    /** Some alternatives are values a branch may have left, not brace expansion. */
+    choice: boolean;
+  } {
     let alternatives = [''];
     let resolved = true;
+    // Set when something other than an environment variable is unknown.
+    let other = false;
+    const unknown = (env: boolean) => {
+      resolved = false;
+      if (!env) other = true;
+    };
+    const isEnv = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !scope.vars.has(name);
     // True while the word is made only of unquoted expansions, which vanish when empty.
     let bare = true;
     const subPrograms: string[] = [];
@@ -1608,15 +1814,23 @@ class Analyzer {
       const next: string[] = [];
       for (const a of alternatives) for (const o of options) next.push(a + o);
       // Past the limit the remaining words are unknown, never silently dropped.
-      if (next.length > MAX_ALTERNATIVES) resolved = false;
+      if (next.length > MAX_ALTERNATIVES) unknown(false);
       alternatives = next.slice(0, MAX_ALTERNATIVES);
     };
-    const expanded = (value: string) => {
-      if (quoted) return append([value]);
+    const expanded = (value: string | string[]) => {
+      const options = Array.isArray(value) ? value : [value];
+      if (quoted) return append(options);
       // A changed IFS splits words somewhere we do not follow. It can be changed in ways
       // the scope does not show (`IFS=x eval ...`, `printf -v IFS`), so any mention counts.
-      if (scope.vars.has('IFS') || this.ifsMentioned) resolved = false;
-      append([value.replace(/[ \t\n]+/g, FIELD_BREAK)]);
+      if (scope.vars.has('IFS') || this.ifsMentioned) unknown(false);
+      append(options.map((v) => v.replace(/[ \t\n]+/g, FIELD_BREAK)));
+    };
+    // A variable that branches left as one of a few known values: each of them.
+    let choice = false;
+    const choicesOf = (name: string) => {
+      const list = scope.vars.get(name) === null ? scope.choices.get(name) : undefined;
+      if (list) choice = true;
+      return list;
     };
     for (const part of parts) {
       // `"$@"` is one word per argument, and no word at all when there are none.
@@ -1639,28 +1853,30 @@ class Analyzer {
         case 'DoubleQuoted':
         case 'LocaleString': {
           const inner = this.evalParts(part.parts as readonly WordPart[], src, scope, ctx, true);
-          resolved &&= inner.resolved;
+          if (!inner.resolved) unknown(inner.envOnly);
+          if (inner.choice) choice = true;
           subPrograms.push(...inner.subPrograms);
-          append([inner.alternatives[0] ?? '']);
+          append(inner.alternatives);
           break;
         }
         case 'SimpleExpansion': {
-          const v = this.lookup(part.text.slice(1), scope);
+          const name = part.text.slice(1);
+          const v = this.lookup(name, scope) ?? choicesOf(name);
           if (v === undefined) {
-            resolved = false;
+            unknown(isEnv(name));
             append([part.text]);
           } else expanded(v);
           break;
         }
         case 'ParameterExpansion': {
-          let v: string | undefined;
+          let v: string | string[] | undefined;
           if (!part.prefix && !part.index && !part.operation)
-            v = this.lookup(part.parameter, scope);
+            v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
           else if (
             part.operation?.type === 'Default' &&
             (part.operation.operator === ':-' || part.operation.operator === '-')
           ) {
-            v = this.lookup(part.parameter, scope);
+            v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
             // A variable known to hold something unknown (`X=$(cmd)`, `read X`) may
             // well be set, so its fallback says nothing about its value.
             if (v === undefined && !this.knownUnknown(part.parameter, scope)) {
@@ -1670,7 +1886,8 @@ class Analyzer {
             }
           }
           if (v === undefined) {
-            resolved = false;
+            const plain = !part.prefix && !part.index && !part.operation;
+            unknown(plain && isEnv(part.parameter));
             append([part.text]);
           } else expanded(v);
           break;
@@ -1709,14 +1926,14 @@ class Analyzer {
           if (part.type === 'ProcessSubstitution') append(['/dev/fd/63']);
           else if (staticOut !== undefined) expanded(staticOut.replace(/\n+$/, ''));
           else {
-            resolved = false;
+            unknown(false);
             append([part.text]);
           }
           break;
         }
         case 'ArithmeticExpansion':
           this.substitutionsIn([part.expression], src, scope, ctx);
-          resolved = false;
+          unknown(false);
           append([part.text]);
           break;
         case 'BraceExpansion':
@@ -1727,7 +1944,102 @@ class Analyzer {
           break;
       }
     }
-    return { alternatives, resolved, subPrograms, bare };
+    return { alternatives, resolved, subPrograms, bare, envOnly: !resolved && !other, choice };
+  }
+
+  /**
+   * After a branch, keeps in `scope` only what every way through it agrees on. A folder
+   * or variable that differs between them becomes unknown. Aliases and functions that
+   * any of them defined are kept, so they are still checked.
+   */
+  private merge(scope: Scope, outcomes: Scope[]): void {
+    const [first, ...rest] = outcomes;
+    if (!first) return;
+    // Where every way leads to a known folder or value, the few candidates are kept.
+    this.setCwd(
+      scope,
+      outcomes.flatMap((o) => (o.cwd !== undefined ? [o.cwd] : (o.cwdChoices ?? [undefined]))),
+    );
+    const names = new Set(outcomes.flatMap((o) => [...o.vars.keys()]));
+    for (const name of names) {
+      const value = first.vars.get(name);
+      const agree = rest.every(
+        (o) => o.vars.has(name) === first.vars.has(name) && o.vars.get(name) === value,
+      );
+      scope.choices.delete(name);
+      if (agree && first.vars.has(name)) {
+        scope.vars.set(name, value!);
+        if (value === null && first.choices.has(name)) {
+          const same = rest.every(
+            (o) => o.choices.get(name)?.join('\0') === first.choices.get(name)!.join('\0'),
+          );
+          if (same) scope.choices.set(name, first.choices.get(name)!);
+        }
+      } else if (agree) scope.vars.delete(name);
+      else {
+        scope.vars.set(name, null);
+        const candidates = outcomes.map((o) => {
+          const v = o.vars.get(name);
+          return typeof v === 'string' ? [v] : v === null ? o.choices.get(name) : undefined;
+        });
+        if (candidates.every(Boolean)) {
+          const set = [...new Set(candidates.flat() as string[])];
+          if (set.length <= MAX_CHOICES) scope.choices.set(name, set);
+        }
+      }
+    }
+    // A variable that became unknown may still name one program on every path.
+    for (const name of names) {
+      if (scope.vars.get(name) !== null) {
+        scope.programs.delete(name);
+        continue;
+      }
+      const program = (o: Scope) => {
+        const v = o.vars.get(name);
+        if (typeof v === 'string') return programName(v);
+        const choices = o.choices.get(name)?.map(programName);
+        if (choices && new Set(choices).size === 1) return choices[0];
+        return o.programs.get(name);
+      };
+      const p = program(first);
+      if (p && rest.every((o) => program(o) === p)) scope.programs.set(name, p);
+      else scope.programs.delete(name);
+    }
+    const args = (o: Scope) => o.positional?.join('\0');
+    if (first.positional && rest.every((o) => args(o) === args(first)))
+      scope.positional = first.positional;
+    else delete scope.positional;
+    for (const o of outcomes) {
+      for (const [k, v] of o.aliases) scope.aliases.set(k, v);
+      for (const [k, v] of o.functions) scope.functions.set(k, v);
+    }
+  }
+
+  /** Sets the folder from its candidates: one known folder, a few, or unknown. */
+  private setCwd(scope: Scope, candidates: (string | undefined)[]): void {
+    const set = [...new Set(candidates)];
+    delete scope.cwdChoices;
+    if (set.length === 1) scope.cwd = set[0];
+    else {
+      scope.cwd = undefined;
+      if (set.length <= MAX_CHOICES && set.every((c) => c !== undefined))
+        scope.cwdChoices = set as string[];
+    }
+  }
+
+  private assign(scope: Scope, name: string, value: EvalWord): void {
+    scope.vars.set(name, value.resolved ? value.value : null);
+    scope.choices.delete(name);
+    const program = value.resolved ? undefined : envProgram(value);
+    if (program) scope.programs.set(name, program);
+    else scope.programs.delete(name);
+  }
+
+  /** The program an unknown command name certainly runs, if belayd can tell. */
+  private programOf(head: EvalWord, scope: Scope): string | undefined {
+    if (head.resolved) return undefined;
+    const ref = /^"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?$/.exec(head.text);
+    return envProgram(head) ?? (ref ? scope.programs.get(ref[1]!) : undefined);
   }
 
   private knownUnknown(name: string, scope: Scope): boolean {
@@ -1774,6 +2086,7 @@ class Analyzer {
       program: '',
       text,
       cwd: scope.cwd,
+      ...(scope.cwd === undefined && scope.cwdChoices ? { cwdChoices: scope.cwdChoices } : {}),
       dynamic: false,
       unresolved: false,
       redirects: [],
@@ -1829,6 +2142,9 @@ function cloneScope(scope: Scope): Scope {
     written: scope.written,
     generated: scope.generated,
     functions: new Map(scope.functions),
+    programs: new Map(scope.programs),
+    choices: new Map(scope.choices),
+    ...(scope.cwdChoices ? { cwdChoices: scope.cwdChoices } : {}),
     ...(scope.positional ? { positional: scope.positional } : {}),
   };
 }
@@ -2040,24 +2356,51 @@ function resetsArguments(args: EvalWord[]): boolean {
 
 /**
  * The shell commands an awk program runs: `system("cmd")`, `"cmd" | getline` and
- * `print | "cmd"`. Undefined when one of them is built at run time, has escapes, or
- * pipes into a shell, since belayd cannot know that command. One pass over the string
- * literals, then plain index lookups, so the time stays linear in the program size.
+ * `print | "cmd"`. Undefined when one of them is built at run time, has escapes, pipes
+ * into a shell, or the program cannot be read, since belayd cannot know that command.
+ * One pass marks strings, regex literals and comments, then plain index lookups, so
+ * the time stays linear in the program size.
  */
 function awkCommands(code: string): string[] | undefined {
   const byStart = new Map<number, { body: string; end: number }>();
   const byEnd = new Map<number, { body: string; end: number }>();
-  const inString = new Uint8Array(code.length);
+  // 1 inside a string, regex literal or comment.
+  const quoted = new Uint8Array(code.length);
+  // The last character that was not space, to tell a regex `/re/` from a division.
+  let prev = '\n';
   for (let i = 0; i < code.length; i++) {
-    if (code[i] !== '"') continue;
-    let j = i + 1;
-    while (j < code.length && code[j] !== '"' && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
-    if (code[j] !== '"') break;
-    const lit = { body: code.slice(i + 1, j), end: j + 1 };
-    byStart.set(i, lit);
-    byEnd.set(j + 1, lit);
-    inString.fill(1, i, j + 1);
-    i = j;
+    const c = code[i]!;
+    if (c === '"') {
+      let j = i + 1;
+      while (j < code.length && code[j] !== '"' && code[j] !== '\n') j += code[j] === '\\' ? 2 : 1;
+      if (code[j] !== '"') return undefined;
+      const lit = { body: code.slice(i + 1, j), end: j + 1 };
+      byStart.set(i, lit);
+      byEnd.set(j + 1, lit);
+      quoted.fill(1, i, j + 1);
+      i = j;
+      prev = '"';
+    } else if (c === '/' && '\n(,~!{};&|=?:'.includes(prev)) {
+      let j = i + 1;
+      while (j < code.length && code[j] !== '/' && code[j] !== '\n') {
+        if (code[j] === '\\') j += 2;
+        else if (code[j] === '[') {
+          // A bracket expression may hold `/` or `"`: skip to its closing `]`.
+          j += code[j + 1] === ']' ? 2 : code[j + 1] === '^' && code[j + 2] === ']' ? 3 : 1;
+          while (j < code.length && code[j] !== ']' && code[j] !== '\n') j++;
+          j++;
+        } else j++;
+      }
+      if (code[j] !== '/') return undefined;
+      quoted.fill(1, i, j + 1);
+      i = j;
+      prev = '/';
+    } else if (c === '#') {
+      let j = i;
+      while (j < code.length && code[j] !== '\n') j++;
+      quoted.fill(1, i, j);
+      i = j - 1;
+    } else if (c !== ' ' && c !== '\t') prev = c;
   }
   const skip = (p: number, step: 1 | -1) => {
     while (code[p] === ' ' || code[p] === '\t') p += step;
@@ -2067,15 +2410,15 @@ function awkCommands(code: string): string[] | undefined {
     lit && !lit.body.includes('\\') ? lit.body : undefined;
   const out: string[] = [];
 
+  // Never skipped as quoted text: a misread quote must not hide a real call.
   for (const m of code.matchAll(/(?<![A-Za-z0-9_])system[ \t]*\(/g)) {
-    if (inString[m.index]) continue;
     const lit = byStart.get(skip(m.index + m[0].length, 1));
     const body = plain(lit);
     if (body === undefined || code[skip(lit!.end, 1)] !== ')') return undefined;
     out.push(body);
   }
   for (let i = 0; i < code.length; i++) {
-    if (code[i] !== '|' || inString[i] || code[i + 1] === '|' || code[i - 1] === '|') continue;
+    if (code[i] !== '|' || quoted[i] || code[i + 1] === '|' || code[i - 1] === '|') continue;
     let after = i + 1;
     if (code[after] === '&') after++;
     after = skip(after, 1);
@@ -2092,7 +2435,7 @@ function awkCommands(code: string): string[] | undefined {
       out.push(body);
       continue;
     }
-    // `print | cmd` with cmd in a variable. A `|` elsewhere is regex alternation.
+    // `print | cmd` with cmd in a variable: the command is not known.
     let start = i;
     const floor = Math.max(0, i - 1000);
     while (start > floor && !';{}\n'.includes(code[start - 1]!)) start--;
@@ -2101,7 +2444,7 @@ function awkCommands(code: string): string[] | undefined {
   return out;
 }
 
-/** The arguments left after getopt-style options, where `valueLetters` take a value. */
+/** The arguments after getopt-style options, where `valueLetters` take a value. */
 function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
   const out: EvalWord[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -2110,9 +2453,11 @@ function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
       out.push(...args.slice(i + 1));
       break;
     }
+    // Options end at the first other word, like getopt in tmux: `new -d rm -rf ~`
+    // runs `rm -rf ~`, and its `-rf` is not read as tmux options.
     if (!v.startsWith('-') || v === '-') {
-      out.push(args[i]!);
-      continue;
+      out.push(...args.slice(i));
+      break;
     }
     // `-dsx` is three flags; `-sname` is -s with its value; `-ds name` takes the next word.
     for (let k = 1; k < v.length; k++) {
@@ -2122,4 +2467,14 @@ function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
     }
   }
   return out;
+}
+
+/**
+ * The program a word names when it is unknown only because of environment variables,
+ * like `$JAVA_HOME/bin/java`: the user's environment decides the folder, not the agent.
+ */
+function envProgram(word: EvalWord): string | undefined {
+  if (!word.envOnly) return undefined;
+  const name = programName(word.value);
+  return name && !/[$`{}]/.test(name) ? name : undefined;
 }
