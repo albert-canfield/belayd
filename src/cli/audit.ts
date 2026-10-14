@@ -28,7 +28,7 @@ async function open(): Promise<AuditLog | undefined> {
 }
 
 export async function log(
-  opts: Common & { session?: string; limit?: string; verify?: boolean },
+  opts: Common & { session?: string; limit?: string; verify?: boolean; only?: string },
 ): Promise<number> {
   const db = await open();
   if (!db) return 0;
@@ -51,7 +51,8 @@ export async function log(
         ...(session ? { session } : workspace ? { workspace } : {}),
         limit: Number(opts.limit ?? 50),
       })
-      .filter((e) => e.phase !== 'post');
+      .filter((e) => e.phase !== 'post')
+      .filter((e) => !opts.only || e.decision === opts.only || e.verdict === opts.only);
     if (opts.json) {
       console.log(JSON.stringify(events, null, 2));
       return 0;

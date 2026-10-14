@@ -69,6 +69,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--all', 'every project, not just this one')
     .option('--session <id>', 'one session only')
     .option('--limit <n>', 'how many events', '50')
+    .option('--only <verdict>', 'only deny, ask, allow or pass')
     .option('--verify', 'check that no event was changed or removed')
     .option('--json', 'print events as JSON')
     .action(async (opts) => {
