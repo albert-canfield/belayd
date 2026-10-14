@@ -110,7 +110,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--force', 'undo even if the files changed again later')
     .action(async (steps: string | undefined, opts) => {
       const { undo } = await import('./undo.js');
-      process.exitCode = await undo(steps, opts);
+      process.exitCode = await friendlySnapshotErrors(() => undo(steps, opts));
     });
 
   program
@@ -118,7 +118,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .description('Reverse the most recent belayd undo in this project')
     .action(async () => {
       const { redo } = await import('./undo.js');
-      process.exitCode = await redo();
+      process.exitCode = await friendlySnapshotErrors(() => redo());
     });
 
   program
@@ -199,6 +199,20 @@ export async function runCli(argv: string[]): Promise<void> {
       console.error(err.message);
       process.exitCode = 78;
       return;
+    }
+    throw err;
+  }
+}
+
+/** Snapshot problems become a short message instead of a stack trace. */
+async function friendlySnapshotErrors(fn: () => Promise<number>): Promise<number> {
+  try {
+    return await fn();
+  } catch (err) {
+    const { SnapshotError } = await import('../snapshots/shadow.js');
+    if (err instanceof SnapshotError) {
+      console.error(pc.red(`belayd could not read or restore its snapshots: ${err.message}`));
+      return 1;
     }
     throw err;
   }

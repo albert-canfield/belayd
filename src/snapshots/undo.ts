@@ -120,12 +120,16 @@ export function planUndo(shadow: Shadow, all: StepChanges[], steps: Set<number>)
   return { steps: chosen.map((s) => s.step), files, conflicts, unchanged };
 }
 
-/** Applies a plan. Returns the snapshot taken just before, so the undo can be undone. */
-export function applyUndo(shadow: Shadow, plan: UndoPlan): SnapRef {
+/**
+ * Applies a plan. Returns the snapshot taken just before (so the undo can be undone)
+ * and the files it left alone because a folder on their path is now a symlink.
+ */
+export function applyUndo(shadow: Shadow, plan: UndoPlan): { before: SnapRef; skipped: string[] } {
   const before = shadow.snapshotAll();
   const byTree = new Map<string, string[]>();
   for (const f of plan.files) byTree.set(f.tree, [...(byTree.get(f.tree) ?? []), f.path]);
-  for (const [tree, files] of byTree) shadow.restore(tree, files);
+  const skipped: string[] = [];
+  for (const [tree, files] of byTree) skipped.push(...shadow.restore(tree, files));
   shadow.snapshotAll();
-  return { tree: before.tree };
+  return { before: { tree: before.tree }, skipped };
 }

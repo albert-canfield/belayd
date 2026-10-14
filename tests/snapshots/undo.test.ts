@@ -284,3 +284,36 @@ describe('new files', () => {
     expect(read('src/brand-new.ts')).toBeUndefined();
   });
 });
+
+describe('hardening from the security review', () => {
+  it('never writes or deletes through a folder that became a symlink', () => {
+    const outside = path.join(sb.dir, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'file.txt'), 'precious\n');
+    shellStep('mkdir -p sub && echo precious > sub/file.txt');
+    // Someone swaps the folder for a link to a folder outside the project.
+    fs.rmSync(path.join(sb.project, 'sub'), { recursive: true });
+    fs.symlinkSync(outside, path.join(sb.project, 'sub'));
+    shellStep('echo later > later.txt');
+    expect(fs.existsSync(path.join(sb.env.BELAYD_HOME!, 'errors.log'))).toBe(false);
+    const r = belayd(sb, ['undo', '1', '--force']);
+    expect(r.stderr).not.toMatch(/at .*\.js:\d+/); // no stack trace
+    expect(fs.readFileSync(path.join(outside, 'file.txt'), 'utf8')).toBe('precious\n');
+  });
+
+  it('restores bytes exactly, whatever .gitattributes says', () => {
+    write('.gitattributes', '* text=auto eol=lf\n');
+    const crlf = 'line one\r\nline two\r\n';
+    fs.writeFileSync(path.join(sb.project, 'win.txt'), crlf);
+    shellStep('echo changed > win.txt');
+    expect(belayd(sb, ['undo']).status).toBe(0);
+    expect(fs.readFileSync(path.join(sb.project, 'win.txt'), 'utf8')).toBe(crlf);
+  });
+
+  it('keeps belayd data private', () => {
+    shellStep('echo x > y.txt');
+    const mode = fs.statSync(sb.env.BELAYD_HOME!).mode & 0o777;
+    expect(mode).toBe(0o700);
+    expect(fs.statSync(path.join(sb.env.BELAYD_HOME!, 'snapshots')).mode & 0o077).toBe(0);
+  });
+});

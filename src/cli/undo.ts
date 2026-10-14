@@ -102,7 +102,7 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
       return 0;
     }
 
-    const before = applyUndo(shadow, plan);
+    const { before, skipped } = applyUndo(shadow, plan);
     await record(home, {
       session,
       phase: 'undo',
@@ -115,11 +115,19 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
       outcome: 'undo',
       snapshot: JSON.stringify(before),
     });
+    const done = plan.files.length - skipped.length;
     console.log(
-      pc.green(`\n✔ Undid ${plan.files.length} file change${plan.files.length === 1 ? '' : 's'}.`) +
+      pc.green(`\n✔ Undid ${done} file change${done === 1 ? '' : 's'}.`) +
         pc.dim('  Changed your mind? belayd redo'),
     );
-    return 0;
+    for (const f of skipped) {
+      console.log(
+        pc.yellow(
+          `  left alone: ${f} (a folder on its path is now a link, belayd will not write through it)`,
+        ),
+      );
+    }
+    return skipped.length > 0 ? 1 : 0;
   } finally {
     db.close();
   }
@@ -163,7 +171,7 @@ export async function redo(): Promise<number> {
       conflicts: [],
       unchanged: [],
     };
-    const snap = applyUndo(shadow, plan);
+    const snap = applyUndo(shadow, plan).before;
     await record(home, {
       session: last.session,
       phase: 'undo',

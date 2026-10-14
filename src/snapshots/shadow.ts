@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { canonicalPath } from '../util/paths.js';
+import { canonicalPath, ensurePrivateDir } from '../util/paths.js';
 
 /**
  * Snapshots live in a shadow Git repository per workspace, under
@@ -112,9 +112,11 @@ export class Shadow {
   ensure(): void {
     if (this.exists()) {
       this.excludeOwnData();
+      this.rawBytes();
       return;
     }
-    fs.mkdirSync(path.dirname(this.dir), { recursive: true, mode: 0o700 });
+    ensurePrivateDir(this.belaydHome);
+    ensurePrivateDir(path.dirname(this.dir));
     execFileSync('git', ['init', '--bare', '-q', this.dir], {
       env: this.cleanEnv(),
       stdio: 'ignore',
@@ -131,6 +133,23 @@ export class Shadow {
     fs.writeFileSync(path.join(this.dir, 'info', 'exclude'), `${excludes.join('\n')}\n`);
     fs.writeFileSync(path.join(this.dir, 'belayd-workspace'), this.workspace);
     this.excludeOwnData();
+    this.rawBytes();
+  }
+
+  /**
+   * Snapshots store bytes exactly. Without this, a project's .gitattributes (text=auto,
+   * eol, LFS filters) would change line endings or content on the way back.
+   */
+  private rawBytes(): void {
+    const file = path.join(this.dir, 'info', 'attributes');
+    const line = '* -text -filter -diff -merge -ident';
+    try {
+      if (fs.readFileSync(file, 'utf8').includes(line)) return;
+    } catch {
+      // not written yet
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${line}\n`);
   }
 
   /** belayd's own data inside the workspace, as a workspace-relative path. */
@@ -234,16 +253,49 @@ export class Shadow {
 
   /** The blob id the file would have right now, or undefined when it does not exist. */
   currentBlob(file: string): string | undefined {
+    if (this.beyondSymlink(file)) return undefined;
     const full = path.join(this.workspace, file);
-    if (!fs.existsSync(full)) return undefined;
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(full);
+    } catch {
+      return undefined;
+    }
+    // Git stores a symlink as the text of its target. Hash the same, never follow it.
+    if (st.isSymbolicLink()) {
+      return this.git(['hash-object', '--stdin'], fs.readlinkSync(full)).trim();
+    }
     return this.git(['hash-object', '--no-filters', '--', full]).trim();
   }
 
-  /** Puts files back the way they were in `tree`. Files absent from `tree` are deleted. */
-  restore(tree: string, files: string[]): void {
-    this.locked(() => {
-      const present = files.filter((f) => this.blobAt(tree, f));
-      const absent = files.filter((f) => !present.includes(f));
+  /**
+   * True when a folder on the way to `file` is a symlink. Git refuses such paths, and
+   * belayd must never write or delete through one: it could lead out of the project.
+   */
+  beyondSymlink(file: string): boolean {
+    const parts = file.split('/').slice(0, -1);
+    let dir = this.workspace;
+    for (const part of parts) {
+      dir = path.join(dir, part);
+      try {
+        if (fs.lstatSync(dir).isSymbolicLink()) return true;
+      } catch {
+        return false; // missing: nothing to follow
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Puts files back the way they were in `tree`. Files absent from `tree` are deleted.
+   * Returns the files it would not touch because a folder on their path is now a symlink.
+   */
+  restore(tree: string, files: string[]): string[] {
+    return this.locked(() => {
+      const unsafe = files.filter((f) => this.beyondSymlink(f) || !this.inside(f));
+      const safe = files.filter((f) => !unsafe.includes(f));
+      const present = safe.filter((f) => this.blobAt(tree, f));
+      const absent = safe.filter((f) => !present.includes(f));
       if (present.length > 0) {
         this.git(
           ['checkout', tree, '--pathspec-from-file=-', '--pathspec-file-nul'],
@@ -252,9 +304,16 @@ export class Shadow {
       }
       for (const f of absent) {
         fs.rmSync(path.join(this.workspace, f), { force: true });
-        this.git(['rm', '-q', '--cached', '--ignore-unmatch', '--', f]);
+        this.git(['update-index', '-q', '--force-remove', '--', f]);
       }
+      return unsafe;
     });
+  }
+
+  /** The path, resolved through any symlinks that exist, stays inside the workspace. */
+  private inside(file: string): boolean {
+    const real = canonicalPath(path.join(this.workspace, file));
+    return real === this.workspace || real.startsWith(this.workspace + path.sep);
   }
 
   diff(from: string, to: string, files: string[]): string {
@@ -310,24 +369,17 @@ export class Shadow {
 
   /** Records the current state of `paths`: present files are added, missing ones removed. */
   private addPaths(paths: string[]): void {
-    const present = paths.filter((p) => fs.existsSync(path.join(this.workspace, p)));
+    // A file reached through a symlinked folder is not in the project any more.
+    const present = paths.filter(
+      (p) => !this.beyondSymlink(p) && exists(path.join(this.workspace, p)),
+    );
     const missing = paths.filter((p) => !present.includes(p));
     if (present.length > 0) {
       this.git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], present.join('\0'));
     }
     if (missing.length > 0) {
-      this.git(
-        [
-          'rm',
-          '-q',
-          '-r',
-          '--cached',
-          '--ignore-unmatch',
-          '--pathspec-from-file=-',
-          '--pathspec-file-nul',
-        ],
-        missing.join('\0'),
-      );
+      // update-index works where git rm refuses (paths behind a symlink).
+      this.git(['update-index', '-q', '--force-remove', '-z', '--stdin'], missing.join('\0'));
     }
   }
 
@@ -397,6 +449,16 @@ export class Shadow {
     } finally {
       fs.rmSync(lock, { force: true });
     }
+  }
+}
+
+/** Exists without following a final symlink (a dangling link still exists). */
+function exists(p: string): boolean {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
   }
 }
 
