@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/albert-canfield/belayd/security/advisories/new
+    about: Ways around belayd that it should have caught

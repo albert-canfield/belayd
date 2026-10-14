@@ -1,0 +1,35 @@
+name: belayd got a command wrong
+description: belayd blocked something harmless, or let something risky through
+labels: [corpus]
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: The command or tool call
+      description: Exactly what the agent tried, as one line if you can.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: explain
+    attributes:
+      label: Output of belayd check --explain
+      description: "Run: belayd check --explain '<the command>'"
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: expected
+    attributes:
+      label: What should belayd have done?
+      options: [Block it, Ask me, Stay quiet]
+    validations:
+      required: true
+  - type: input
+    id: preset
+    attributes:
+      label: Preset or policy
+      placeholder: balanced, strict, yolo-with-undo, or paste the relevant rule
+  - type: markdown
+    attributes:
+      value: If this is a way around belayd that it should have caught, please report it privately instead, see SECURITY.md.
