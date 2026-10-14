@@ -25,7 +25,7 @@ Three conclusions shape the design:
 
 ## Claude Code
 
-Status: first-class integration for v0.1. Source: [Hooks reference](https://code.claude.com/docs/en/hooks), [Permissions](https://code.claude.com/docs/en/permissions), [Environment variables](https://code.claude.com/docs/en/env-vars), [CLI reference](https://code.claude.com/docs/en/cli-reference).
+Status: shipped in v0.1, verified live with Claude Code 2.1.292 (deny in bypassPermissions mode, held approval in `claude -p`, undo after a real session). Source: [Hooks reference](https://code.claude.com/docs/en/hooks), [Permissions](https://code.claude.com/docs/en/permissions), [Environment variables](https://code.claude.com/docs/en/env-vars), [CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 ### Mechanism
 
@@ -132,7 +132,7 @@ Effort: about 3 to 4 days including tests, on top of the policy engine.
 
 ## Codex CLI
 
-Status: second agent for v0.1. Latest stable `rust-v0.162.1` (9 Oct 2026). Sources: [Hooks](https://developers.openai.com/codex/hooks), [Config reference](https://learn.chatgpt.com/docs/config-file/config-reference.md), [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules.md), [Sandboxing](https://learn.chatgpt.com/docs/sandboxing.md), [Managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration.md), [Releases](https://github.com/openai/codex/releases).
+Status: shipped in v0.1, verified live with Codex CLI 0.162.0-alpha.2 (`cat .env` blocked through PreToolUse, a real `apply_patch` edit undone). Latest stable `rust-v0.162.1` (9 Oct 2026). Sources: [Hooks](https://developers.openai.com/codex/hooks), [Config reference](https://learn.chatgpt.com/docs/config-file/config-reference.md), [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules.md), [Sandboxing](https://learn.chatgpt.com/docs/sandboxing.md), [Managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration.md), [Releases](https://github.com/openai/codex/releases).
 
 ### Mechanism
 

@@ -166,7 +166,7 @@ The last row is self-protection: an agent that tries to edit `belayd.yaml`, `$BE
 
 `ask` resolves through the first available channel:
 1. **native**: the agent can show its own prompt from a hook (Claude Code interactive sessions, Cursor shell and MCP hooks). belayd passes its reason through and records the outcome when the post-action event arrives. Fastest, nothing new to learn.
-2. **held call**: everywhere else (Codex, Gemini, OpenCode, headless `claude -p`, Cursor writes). The hook process does not answer yet. It writes a pending approval to SQLite, fires a desktop notification, and waits. Whoever answers first wins:
+2. **held call**: everywhere else (Codex, headless `claude -p`, Cursor through the Claude Code hooks, the MCP gateway). The hook process does not answer yet. It writes a pending request to `$BELAYD_HOME/approvals/pending/<id>.json`, fires a desktop notification, and waits. Whoever answers first wins (the decision file is created with `O_EXCL`):
    - **tty**: the `belayd approve` console in a second terminal. We never draw over an agent's full-screen TUI.
    - **web**: `http://127.0.0.1:<port>` with a per-install random token. Good for long, unattended sessions.
 3. The hook then returns a plain `allow` or `deny`. It never sends `ask` to an agent that does not support it: Codex, for example, treats `ask` as a failed hook and runs the tool.
@@ -175,7 +175,8 @@ Deadlines: no answer before `approval.timeout` means `onTimeout` (default `deny`
 
 ### 2.6 Audit log
 
-- One SQLite database at `$BELAYD_HOME/belayd.db` (default `~/.belayd`), WAL mode, `busy_timeout` for parallel hook processes.
+- One SQLite database at `$BELAYD_HOME/audit.db` (default `~/.belayd`), WAL mode, `busy_timeout` for parallel hook processes.
+- Built on `node:sqlite` (Node 22.13+) instead of better-sqlite3. Measured cost per hook call is about 1.5 ms, and there is no native module, so installs never fail on a missing prebuilt binary or compiler. This is a deliberate change from the handover, for the two-minute first run.
 - Append-only: `BEFORE UPDATE` and `BEFORE DELETE` triggers raise. Post-action results are new rows, not updates. Each row stores the hash of the previous row in its session, so tampering is detectable (`belayd log --verify`).
 - Tables: `sessions`, `events` (session, step, phase pre/post, agent, tool, action kind, redacted input, verdict, reason, rule id, approval channel and outcome, snapshot refs, duration), `approvals`.
 - `belayd log` (filterable, `--json`), `belayd replay <session>` (timeline with verdict colours, diffs per step from snapshots).
@@ -269,7 +270,7 @@ tests/            policy tables, adapter contract fixtures, e2e undo, bench
 - **Undo end to end**: temp repo, simulated agent edits and shell writes, undo by step and by session, byte-for-byte comparison. Non-Git folder variant.
 - **Fail-safe tests**: corrupt policy, unreadable database, thrown errors, missing binary; each must block.
 - **Bench**: hook latency in CI as above.
-- **CI**: GitHub Actions, Node 22 and 24, ubuntu-latest and macos-latest. Lint, typecheck, format, test, bench, and an `npm pack` smoke test that runs the tarball through `npx`. Node 20 reached end of life on 30 Apr 2026 and current tooling (vitest 5, better-sqlite3 13, commander 15) needs Node 22, so `engines` is `>=22.12`.
+- **CI**: GitHub Actions, Node 22 and 24, ubuntu-latest and macos-latest. Lint, typecheck, format, test, bench, and an `npm pack` smoke test that runs the tarball through `npx`. Node 20 reached end of life on 30 Apr 2026 and current tooling (vitest 5, better-sqlite3 13, commander 15) needs Node 22, so `engines` is `>=22.13` (the first Node 22 with `node:sqlite` unflagged).
 
 ## 5. Milestones
 
@@ -307,6 +308,16 @@ Voice rules: short concrete sentences, a bit of personality, no em-dashes, no "s
 3. **Install path**: `npx belayd init` installs belayd globally and pins an absolute hook path.
 4. **Second agent**: Codex CLI. Cursor gets partial coverage in v0.1 through host detection.
 5. **MCP gateway scope**: stdio servers only in v0.1. OAuth remote servers stay covered by agent hooks.
+
+## 8. Decisions made during the build
+
+- **Paths are judged as written and as they really are.** Every path is matched both literally and with symlinks resolved, and `{workspace}`, `{home}` and friends expand to both forms. A symlink in the project that points into `~/.ssh` is treated as `~/.ssh`; `/tmp` and `/private/tmp` on macOS are one place.
+- **Unattended Claude Code sessions are detected with `CLAUDE_CODE_SESSION_ATTENDED=0`** (set by `claude -p`, observed in Claude Code 2.1.292, not documented). Anything else is treated as attended, which keeps the native prompt.
+- **Approvals are files, not rows.** The approval broker works even when SQLite is broken, and needs no daemon.
+- **The approval page** listens on 127.0.0.1:23529 ("BELAY" on a phone keypad), needs a per-install token, and checks the Host header, a SameSite=Strict cookie and a custom request header.
+- **Snapshots** skip read-only commands, files over 20 MB, belayd's own folder, and agents running in the home folder or at `/`. An unchanged workspace costs one `git status`.
+- **Codex** gets no `ask` and no plain `allow`: a held call answers deny, or nothing plus a `systemMessage`.
+- **MCP tool calls** get file and shell rules: path-like arguments are reads or writes, and shell-style tools have their command analysed.
 
 ## Name
 
