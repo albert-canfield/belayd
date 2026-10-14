@@ -6,10 +6,19 @@ export type Action =
   | { kind: 'read'; path: string }
   | { kind: 'write'; path: string; content?: string }
   | { kind: 'fetch'; url: string; method?: string; body?: string }
+  | { kind: 'patch'; files: PatchFile[] }
   | { kind: 'mcp'; server: string; tool: string; args: unknown }
   | { kind: 'tool'; name: string; input: unknown };
 
 export type ActionKind = Action['kind'];
+
+/** One file in a multi-file edit (Codex apply_patch). */
+export interface PatchFile {
+  path: string;
+  op: 'add' | 'update' | 'delete';
+  /** New location when the file is moved. */
+  to?: string;
+}
 
 export interface ActionContext {
   agent: AgentId;

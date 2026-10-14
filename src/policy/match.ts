@@ -7,7 +7,7 @@ import type { Match } from './schema.js';
 import type { Subject } from './subjects.js';
 import type { ActionContext, ActionKind } from './types.js';
 
-const KINDS = new Set<ActionKind>(['shell', 'read', 'write', 'fetch', 'mcp', 'tool']);
+const KINDS = new Set<ActionKind>(['shell', 'read', 'write', 'patch', 'fetch', 'mcp', 'tool']);
 const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
 
 export interface MatchEnv {

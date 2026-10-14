@@ -140,6 +140,13 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
       const p = absolute(action.path, ctx);
       return [{ ...empty('write', ctx, action.path), paths: p, writes: p }];
     }
+    case 'patch':
+      return action.files.flatMap((f) =>
+        [f.path, ...(f.to ? [f.to] : [])].map((p) => {
+          const both = absolute(p, ctx);
+          return { ...empty('write', ctx, `${f.op} ${p}`), paths: both, writes: both };
+        }),
+      );
     case 'fetch':
       return [
         {

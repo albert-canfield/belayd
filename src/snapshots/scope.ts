@@ -97,6 +97,13 @@ export function snapshotScope(action: Action, ctx: ActionContext): Scope {
       const rel = relativeTo(ctx.workspace, action.path, ctx.cwd);
       return rel ? { kind: 'paths', paths: [rel] } : { kind: 'none' };
     }
+    case 'patch': {
+      const rels = action.files
+        .flatMap((f) => [f.path, ...(f.to ? [f.to] : [])])
+        .map((p) => relativeTo(ctx.workspace, p, ctx.cwd))
+        .filter((p): p is string => p !== undefined);
+      return rels.length > 0 ? { kind: 'paths', paths: rels } : { kind: 'none' };
+    }
     case 'shell': {
       const subjects = buildSubjects(action, ctx);
       return subjects.every(readOnly) ? { kind: 'none' } : { kind: 'all' };

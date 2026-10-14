@@ -20,6 +20,8 @@ export function actionLabel(action: Action): string {
       }
       return `${action.server}: ${action.tool} ${args.length > 400 ? `${args.slice(0, 397)}...` : args}`;
     }
+    case 'patch':
+      return `apply_patch: ${action.files.map((f) => `${f.op} ${f.path}${f.to ? ` -> ${f.to}` : ''}`).join(', ')}`;
     case 'tool':
       return action.name;
   }
