@@ -134,6 +134,7 @@ interface MatcherGroup {
 export function mergeMatcherHooks(
   settings: Settings,
   add: Record<string, unknown> | undefined,
+  matcher = '*',
 ): Settings {
   const next = structuredClone(settings);
   const hooks = { ...(asRecord(next.hooks) as Record<string, MatcherGroup[] | undefined>) };
@@ -146,7 +147,7 @@ export function mergeMatcherHooks(
     else delete hooks[event];
   }
   for (const [event, handler] of Object.entries(add ?? {})) {
-    if (handler) hooks[event] = [...(hooks[event] ?? []), { matcher: '*', hooks: [handler] }];
+    if (handler) hooks[event] = [...(hooks[event] ?? []), { matcher, hooks: [handler] }];
   }
   if (Object.keys(hooks).length > 0) next.hooks = hooks;
   else delete next.hooks;

@@ -12,7 +12,12 @@ import type { Answer, Dialect } from '../types.js';
  * Copilot CLI also run these hooks from `.claude/settings*.json`, so the payload says
  * which agent is really calling (see `agent`).
  */
+const CLAUDE_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
+
 export const claudeDialect: Dialect = {
+  recognises: (payload) =>
+    CLAUDE_EVENTS.has(String(payload.hook_event_name)) ||
+    (payload.hook_event_name === undefined && typeof payload.tool_name === 'string'),
   parse(payload) {
     const event = payload.hook_event_name;
     return {

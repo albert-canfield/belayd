@@ -24,6 +24,12 @@ export interface ToolEvent {
 /** How one agent speaks the hook protocol. Loaded on every tool call, so keep it small. */
 export interface Dialect {
   /**
+   * True when a payload is in this dialect. An agent can run another agent's hook
+   * command (Gemini CLI can import Claude Code's hooks), so `belayd hook` switches to
+   * the dialect that recognises what it was actually sent.
+   */
+  recognises?(payload: Record<string, unknown>): boolean;
+  /**
    * Reads the agent's JSON. `event` is the `--event` argument the hook was installed
    * with, for agents that do not name the event in the payload.
    */

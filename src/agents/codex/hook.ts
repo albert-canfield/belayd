@@ -17,6 +17,7 @@ import { parseApplyPatch } from './patch.js';
  *   returned as no decision plus a systemMessage; Codex then continues normally.
  */
 export const codexDialect: Dialect = {
+  recognises: claudeDialect.recognises!,
   parse: claudeDialect.parse,
   agent: () => 'codex',
   toAction: (tool, input) => toCodexAction(tool, input),

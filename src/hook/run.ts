@@ -1,4 +1,5 @@
-import { findAgent } from '../agents/registry.js';
+import { findAgent, hookAgents } from '../agents/registry.js';
+import type { Dialect } from '../agents/types.js';
 import { handleToolHook } from './handle.js';
 import type { HookResult } from './types.js';
 
@@ -20,7 +21,8 @@ export async function runHook(args: string[]): Promise<void> {
     if (!agent?.dialect) {
       result = blockUnknown(`unknown agent "${args[0] ?? ''}"`);
     } else {
-      const [dialect, input] = await Promise.all([agent.dialect(), readStdin()]);
+      const [installed, input] = await Promise.all([agent.dialect(), readStdin()]);
+      const dialect = await dialectFor(installed, input);
       result = await handleToolHook(
         input,
         {
@@ -58,4 +60,27 @@ function readStdin(): Promise<string> {
     process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     process.stdin.on('error', reject);
   });
+}
+
+/**
+ * The dialect for what the hook was actually sent. Usually the installed one; another
+ * when an agent runs a hook command written for a different agent (Gemini CLI can
+ * import Claude Code's hooks). Unreadable input stays with the installed dialect,
+ * which blocks it.
+ */
+async function dialectFor(installed: Dialect, raw: string): Promise<Dialect> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return installed;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return installed;
+  const p = payload as Record<string, unknown>;
+  if (!installed.recognises || installed.recognises(p)) return installed;
+  for (const agent of hookAgents()) {
+    const other = await agent.dialect!();
+    if (other.recognises?.(p)) return other;
+  }
+  return installed;
 }

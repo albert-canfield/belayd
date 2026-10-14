@@ -16,6 +16,7 @@ import type { Answer, Dialect } from '../types.js';
  *   watching, so belayd holds the call and asks the person itself, as for Codex.
  */
 export const copilotDialect: Dialect = {
+  recognises: (payload) => typeof payload.toolName === 'string',
   parse(payload, event) {
     const e = (event ?? '').toLowerCase();
     const phase =
