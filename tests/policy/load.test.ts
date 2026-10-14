@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { evaluate } from '../../src/policy/engine.js';
 import { loadPolicy, PolicyError } from '../../src/policy/load.js';
@@ -88,4 +89,21 @@ rules:
     fs.writeFileSync(path.join(home, 'belayd.yaml'), 'version: 1\nextends: strict\n');
     expect((await load()).preset).toBe('strict');
   });
+});
+
+describe('example policies', () => {
+  const dir = new URL('../../examples/', import.meta.url);
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.yaml'));
+  it('exist', () => expect(files.length).toBeGreaterThan(2));
+  for (const f of files) {
+    it(`${f} is a valid policy`, async () => {
+      const policy = await loadPolicy({
+        workspace: '/work/app',
+        belaydHome: '/tmp/none',
+        policyPath: fileURLToPath(new URL(f, dir)),
+        noCache: true,
+      });
+      expect(policy.rules.user.length).toBeGreaterThan(0);
+    });
+  }
 });

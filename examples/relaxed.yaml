@@ -1,0 +1,11 @@
+# A personal side project: fewer questions, undo as the safety net. The catastrophic
+# rules still apply, and pushes and publishes still ask.
+version: 1
+extends: yolo-with-undo
+
+rules:
+  - id: ask-before-pushing
+    match:
+      command: git push
+    decision: ask
+    reason: Pushes to the remote, which undo cannot reach.

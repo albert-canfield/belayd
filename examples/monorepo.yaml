@@ -1,0 +1,33 @@
+# A large repository: generated code nobody should hand-edit, a production database,
+# and deploy scripts that only people run.
+version: 1
+extends: balanced
+
+rules:
+  - id: no-edits-to-generated-code
+    match:
+      writes: ['{workspace}/**/generated/**', '{workspace}/**/*.gen.ts', '{workspace}/**/__generated__/**']
+    decision: deny
+    reason: This file is generated. Change the source and run the generator instead.
+
+  - id: no-production-database
+    match:
+      command: [psql, mysql, pgcli]
+      args: { any: ['*prod*', '*production*'] }
+    decision: deny
+    reason: Production database access is not allowed from agents.
+
+  - id: ask-before-deploys
+    match:
+      command: [./scripts/deploy.sh, scripts/deploy.sh, fly deploy, vercel, kubectl apply, helm upgrade]
+    decision: ask
+    reason: Deploys to a shared environment.
+
+  - id: allow-cleaning-build-output
+    match:
+      command: [rm, rimraf]
+      writes: ['{workspace}/**/dist/**', '{workspace}/**/.turbo/**', '{workspace}/**/coverage/**']
+    decision: allow
+
+snapshots:
+  maxFileSize: 5MB

@@ -1,0 +1,23 @@
+# For agents running in CI or other unattended jobs. Nobody can answer a question
+# there, so anything that would ask is denied instead, and the strict preset asks
+# (and therefore denies) whatever no rule allows.
+version: 1
+extends: strict
+
+approval:
+  channels: [native]   # no console or web page in CI
+  timeout: 5s
+  notify: false
+
+rules:
+  - id: allow-test-and-build
+    match:
+      command: [npm test, npm run, pnpm test, pnpm run, pnpm install, npm ci, make, pytest, go test, cargo test, cargo build]
+    decision: allow
+    reason: Building and testing is what this job is for.
+
+  - id: allow-project-writes
+    match:
+      writes: ['{workspace}/**', '!{workspace}/.github/**', '!{workspace}/belayd.yaml']
+    decision: allow
+    reason: Changes inside the checkout, except workflows and this policy.

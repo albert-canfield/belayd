@@ -1,0 +1,29 @@
+# A team policy. Commit it as belayd.yaml so every agent on every machine follows it.
+version: 1
+extends: balanced
+
+rules:
+  # Our main branches are protected on the server too, but agents should not even try.
+  - id: no-push-to-main
+    match:
+      command: git push
+      args: { any: [main, master, 'HEAD:main', 'HEAD:master'] }
+    decision: deny
+    reason: Push to a branch and open a pull request instead of pushing to main.
+
+  # Releases go through CI.
+  - id: no-manual-releases
+    match:
+      command: [npm version, pnpm version, gh release create, git tag]
+    decision: deny
+    reason: Releases are cut by the release workflow, not by hand.
+
+  # Migrations change shared databases. A person runs them.
+  - id: ask-before-migrations
+    match:
+      command: [prisma migrate, pnpm prisma migrate, npx prisma migrate, rails db:migrate, alembic upgrade]
+    decision: ask
+    reason: Runs a database migration.
+
+approval:
+  timeout: 3m
