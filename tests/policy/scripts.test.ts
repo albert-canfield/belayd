@@ -88,6 +88,25 @@ describe('runners and hooks the agent changed in this session', () => {
     expect(await verdict('npm install lodash', 'balanced', ['package.json'])).toBe('pass');
   });
 
+  it('asks before installs and other runners that read an edited package.json', async () => {
+    const edited = ['package.json'];
+    expect(await verdict('npm install', 'balanced', edited)).toBe('ask');
+    expect(await verdict('npm ci', 'balanced', edited)).toBe('ask');
+    expect(await verdict('pnpm i', 'balanced', edited)).toBe('ask');
+    expect(await verdict('yarn', 'balanced', edited)).toBe('ask');
+    expect(await verdict('node --run test', 'balanced', edited)).toBe('ask');
+    expect(await verdict('npm --prefix pkg test', 'balanced', ['pkg/package.json'])).toBe('ask');
+    expect(await verdict('npm -w pkg test', 'balanced', ['pkg/package.json'])).toBe('ask');
+    expect(await verdict('npm install', 'balanced')).toBe('pass');
+  });
+
+  it('asks before git commit when husky, lefthook or pre-commit hooks were edited', async () => {
+    fs.mkdirSync(path.join(ws, '.git'));
+    expect(await verdict('git commit -m x', 'balanced', ['.husky/pre-commit'])).toBe('ask');
+    expect(await verdict('git commit -m x', 'balanced', ['.pre-commit-config.yaml'])).toBe('ask');
+    expect(await verdict('git commit -m x', 'balanced', ['lefthook.yml'])).toBe('ask');
+  });
+
   it('asks before make when the agent edited the Makefile', async () => {
     expect(await verdict('make deploy', 'balanced', ['Makefile'])).toBe('ask');
     expect(await verdict('make -f build.mk', 'balanced', ['build.mk'])).toBe('ask');

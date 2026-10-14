@@ -86,12 +86,11 @@ export async function handleToolHook(
     try {
       const action = dialect.toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
       const policy = await loadPolicy({ workspace, belaydHome: stateDir });
-      snapshot = capture(stateDir, policy, action, ctxBase);
-      addSessionWrites(
-        stateDir,
-        session,
-        buildSubjects(action, ctxBase).flatMap((s) => s.writes),
-      );
+      // What the step wrote: what its command says, and what the snapshot saw change,
+      // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
+      const written = buildSubjects(action, ctxBase).flatMap((s) => s.writes);
+      snapshot = capture(stateDir, policy, action, ctxBase, (paths) => written.push(...paths));
+      addSessionWrites(stateDir, session, written);
     } catch {
       // recording the outcome matters more than the snapshot
     }

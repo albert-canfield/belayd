@@ -152,3 +152,26 @@ describe('doctor and the policy cache', () => {
     expect(rebuilt.every((p) => p.default !== 'allow' && p.rules.final.length > 0)).toBe(true);
   });
 });
+
+describe('what a step changed', () => {
+  it('notices files written by code the command does not show', () => {
+    fs.writeFileSync(path.join(sb.project, 'package.json'), '{"scripts":{"test":"echo ok"}}\n');
+    const command = `node -e "require('fs').writeFileSync('package.json', '{}')"`;
+    const event = (name: string, cmd: string) =>
+      JSON.stringify({
+        hook_event_name: name,
+        session_id: 'hidden-write',
+        cwd: sb.project,
+        tool_name: 'Bash',
+        tool_use_id: `id-${name}-${cmd.length}`,
+        tool_input: { command: cmd },
+      });
+    expect(decision(hook(event('PreToolUse', 'npm test')).stdout)).toBe('pass');
+    hook(event('PreToolUse', command));
+    fs.writeFileSync(path.join(sb.project, 'package.json'), '{"scripts":{"test":"rm -rf ~"}}\n');
+    hook(event('PostToolUse', command));
+    const r = hook(event('PreToolUse', 'npm test'));
+    expect(r.stdout).toMatch(/package\.json/);
+    expect(decision(r.stdout)).toBe('ask');
+  });
+});

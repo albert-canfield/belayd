@@ -21,6 +21,8 @@ export interface Snapshot {
   paths?: string[];
   /** Files left out because they were too big. */
   skipped?: string[];
+  /** For a whole-workspace snapshot: the paths that changed since the previous one. */
+  changed?: string[];
 }
 
 export interface Change {
@@ -189,7 +191,7 @@ export class Shadow {
       const { kept, skipped } = this.filterBig(dirty);
       if (kept.length > 0) this.addPaths(kept);
       const tree = this.writeTree();
-      return { tree, ...(skipped.length > 0 ? { skipped } : {}) };
+      return { tree, changed: dirty, ...(skipped.length > 0 ? { skipped } : {}) };
     });
   }
 

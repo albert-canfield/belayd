@@ -18,13 +18,15 @@ export function tooBroad(workspace: string, home: string): boolean {
 /**
  * Takes the snapshot an action needs and returns it as JSON for the audit log.
  * A failed snapshot never blocks the agent: it is logged and undo is simply not
- * available for that step.
+ * available for that step. `onChanged` receives the absolute paths that changed since
+ * the previous snapshot, which after a step is what that step wrote.
  */
 export function capture(
   belaydHome: string,
   policy: CompiledPolicy,
   action: Action,
   ctx: ActionContext,
+  onChanged?: (paths: string[]) => void,
 ): string | undefined {
   if (!policy.snapshots.enabled) return undefined;
   try {
@@ -34,7 +36,9 @@ export function capture(
     const shadow = new Shadow(belaydHome, ctx.workspace, {
       maxFileSize: policy.snapshots.maxFileSize,
     });
-    const snap = scope.kind === 'all' ? shadow.snapshotAll() : shadow.snapshotPaths(scope.paths);
+    const { changed, ...snap } =
+      scope.kind === 'all' ? shadow.snapshotAll() : shadow.snapshotPaths(scope.paths);
+    if (changed && onChanged) onChanged(changed.map((p) => path.join(ctx.workspace, p)));
     return JSON.stringify(snap);
   } catch (err) {
     logError(belaydHome, `snapshot: ${(err as Error).message}`);

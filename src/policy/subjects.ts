@@ -64,8 +64,22 @@ const NETWORK_SENDERS = new Set([
   'gh',
 ]);
 
+const PACKAGE_MANAGER_OPTIONS = new Set([
+  '--prefix',
+  '-C',
+  '--dir',
+  '--cwd',
+  '-w',
+  '--workspace',
+  '--filter',
+  '-F',
+]);
 const OPTION_VALUES: Record<string, Set<string>> = {
   git: new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env']),
+  npm: PACKAGE_MANAGER_OPTIONS,
+  pnpm: PACKAGE_MANAGER_OPTIONS,
+  yarn: PACKAGE_MANAGER_OPTIONS,
+  bun: PACKAGE_MANAGER_OPTIONS,
 };
 
 /** Programs whose first positional argument is not a path (a pattern, a script, text). */
@@ -543,7 +557,20 @@ function safeJson(value: unknown): string {
 const JS_RUNTIMES = new Set(['node', 'nodejs', 'bun']);
 const BELAYD_BIN = /(^|\/)(belayd|leashd)\/dist\/bin\.js$/;
 
-const SCRIPT_RUNNERS = new Set(['run', 'run-script', 'test', 't', 'start', 'exec', 'x', 'dlx']);
+const SCRIPT_RUNNERS = new Set([
+  'run',
+  'run-script',
+  'test',
+  't',
+  'start',
+  'stop',
+  'restart',
+  'exec',
+  'x',
+  'dlx',
+]);
+/** Commands that run a package's install scripts when given no package names. */
+const INSTALLERS = new Set(['install', 'i', 'ci', 'add', 'rebuild', 'link', 'pack', 'publish']);
 const GIT_HOOKED = new Set([
   'commit',
   'push',
@@ -570,10 +597,33 @@ function drivers(
     case 'npm':
     case 'pnpm':
     case 'yarn':
-    case 'bun':
-      return SCRIPT_RUNNERS.has(positionals[0] ?? '') ||
-        (program === 'yarn' && positionals.length > 0)
+    case 'bun': {
+      const sub = positionals[0];
+      // Running a script, or installing, which runs the package's own install scripts.
+      const runs =
+        SCRIPT_RUNNERS.has(sub ?? '') ||
+        (INSTALLERS.has(sub ?? '') && positionals.length === 1) ||
+        (program === 'yarn' && (positionals.length > 0 || sub === undefined));
+      if (!runs) return [];
+      // `npm --prefix dir`, `pnpm -C dir` and `npm -w pkg` use another package.json.
+      const out = [here('package.json')];
+      for (let i = 0; i < raw.length; i++) {
+        if (PACKAGE_MANAGER_OPTIONS.has(raw[i]!) && raw[i + 1])
+          out.push(path.resolve(cwd, raw[i + 1]!, 'package.json'));
+        const eq = /^--(?:prefix|dir|cwd|workspace)=(.+)$/.exec(raw[i]!);
+        if (eq) out.push(path.resolve(cwd, eq[1]!, 'package.json'));
+      }
+      return out;
+    }
+    case 'node':
+      return raw.includes('--run') || raw.some((a) => a.startsWith('--run='))
         ? [here('package.json')]
+        : [];
+    case 'cargo':
+      return ['build', 'b', 'run', 'r', 'test', 't', 'check', 'c', 'bench'].includes(
+        positionals[0] ?? '',
+      )
+        ? [here('build.rs'), here('Cargo.toml')]
         : [];
     case 'make':
     case 'gmake': {
@@ -588,8 +638,15 @@ function drivers(
     case 'pre-commit':
       return [here('.pre-commit-config.yaml')];
     case 'git':
+      // Hooks live in .git/hooks, or wherever husky, lefthook or pre-commit point them.
       return GIT_HOOKED.has(positionals[0] ?? '')
-        ? [`${path.join(workspace, '.git', 'hooks')}/`]
+        ? [
+            `${path.join(workspace, '.git', 'hooks')}/`,
+            `${path.join(workspace, '.husky')}/`,
+            path.join(workspace, 'lefthook.yml'),
+            path.join(workspace, '.lefthook.yml'),
+            path.join(workspace, '.pre-commit-config.yaml'),
+          ]
         : [];
     default:
       return [];
