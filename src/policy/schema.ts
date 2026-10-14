@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
+const pattern = z.string().max(1000, 'patterns are limited to 1000 characters');
 const list = z
-  .union([z.string(), z.array(z.string()).min(1)])
+  .union([pattern, z.array(pattern).min(1).max(500)])
   .transform((v) => (Array.isArray(v) ? v : [v]));
 
 export const MatchSchema = z

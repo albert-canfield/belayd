@@ -178,19 +178,33 @@ function toPosix(p: string): string {
   return path.sep === '\\' ? p.split(path.sep).join('/') : p;
 }
 
-const wildcardCache = new Map<string, RegExp>();
-
-/** `*` matches anything, `?` one character. Everything else is literal. */
+/**
+ * `*` matches anything, `?` one character. Everything else is literal.
+ *
+ * A loop rather than a regular expression: a pattern like `*e*e*e*Q` from a project
+ * file would make a regex backtrack for minutes, and this stays linear per star.
+ */
 export function wildcard(glob: string, value: string, nocase = false): boolean {
-  const key = (nocase ? 'i:' : 's:') + glob;
-  let re = wildcardCache.get(key);
-  if (!re) {
-    const body = glob
-      .split('')
-      .map((ch) => (ch === '*' ? '.*' : ch === '?' ? '.' : ch.replace(/[.+^${}()|[\]\\]/g, '\\$&')))
-      .join('');
-    re = new RegExp(`^${body}$`, nocase ? 'is' : 's');
-    wildcardCache.set(key, re);
+  if (nocase) {
+    glob = glob.toLowerCase();
+    value = value.toLowerCase();
   }
-  return re.test(value);
+  let g = 0;
+  let v = 0;
+  let star = -1;
+  let resume = 0;
+  while (v < value.length) {
+    if (g < glob.length && (glob[g] === '?' || glob[g] === value[v])) {
+      g++;
+      v++;
+    } else if (g < glob.length && glob[g] === '*') {
+      star = g++;
+      resume = v;
+    } else if (star >= 0) {
+      g = star + 1;
+      v = ++resume;
+    } else return false;
+  }
+  while (glob[g] === '*') g++;
+  return g === glob.length;
 }
