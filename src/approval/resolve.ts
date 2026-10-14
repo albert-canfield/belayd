@@ -37,7 +37,7 @@ export async function resolveAsk(opts: ResolveOptions): Promise<Resolution> {
   if (opts.canAskNatively && channels.includes('native')) {
     return { verdict: 'ask', reason: `belayd: ${decision.reason}${rule}` };
   }
-  if (!channels.includes('web') && !channels.includes('tty')) {
+  if (!channels.includes('web') && !channels.includes('tty') && !channels.includes('dialog')) {
     return {
       verdict: 'deny',
       reason: `belayd needs a person to approve this, and no approval channel is available here: ${decision.reason}${rule}`,

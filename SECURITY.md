@@ -38,6 +38,14 @@ belayd catches mistakes made by an AI coding agent that you mostly trust, asks y
 - A broken or invalid `belayd.yaml` blocks every action until it is fixed. `belayd doctor` says what is wrong.
 - Audit and snapshot failures never change a decision. They are written to `~/.belayd/errors.log` and reported by `belayd doctor`.
 
+## How strong a held approval is
+
+When an agent cannot show its own prompt (`claude -p`, Codex, Cursor, the MCP gateway), belayd holds the call and waits for a person. How strong that is depends on the channel:
+
+- **`tty` and `web` (the default).** The request is a file in `~/.belayd/approvals`, answered by `belayd approve` or the local web page. belayd's rules deny the obvious ways for an agent to answer itself (running `belayd approve`, reading the page key, writing the files, calling the page's API), and `belayd approve` refuses to run inside an agent's tool call. But every program running as you can write files as you. An agent that deliberately starts a background program to watch the folder and write answers could approve itself. Treat these channels as protection against mistakes, not against an agent working to get around you.
+- **`dialog`.** The waiting hook process shows a native dialog itself (macOS, or Linux with `zenity`) and only that click counts. Nothing is written to disk, so there is nothing to forge. With `approval: { channels: [native, dialog] }` this is the only way a held call is approved. A program with accessibility permissions to click on your screen could still answer it.
+- **`native`.** In an attended Claude Code session, the question appears in Claude Code's own prompt, which is the strongest of the three.
+
 ## The approval page
 
 `belayd ui` serves a page on `127.0.0.1` only. It needs a 256-bit key stored in `~/.belayd/ui-token` (readable only by you), sets a `SameSite=Strict`, `HttpOnly` cookie, requires a custom header on every request that changes anything, checks the `Origin` header, and rejects requests whose `Host` header is not `127.0.0.1` or `localhost` to stop DNS rebinding. The page has a strict Content-Security-Policy and loads nothing from the network.

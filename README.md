@@ -56,7 +56,7 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
 
 **It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day.
 
-**It asks in the right place.** In an interactive Claude Code session, belayd's question shows up in Claude Code's own prompt. When nobody is watching the terminal (`claude -p`, Codex, a long background run), belayd holds the call and pings you, and you answer with `belayd approve` or on a local web page. No answer in time means no.
+**It asks in the right place.** In an interactive Claude Code session, belayd's question shows up in Claude Code's own prompt. When nobody is watching the terminal (`claude -p`, Codex, a long background run), belayd holds the call and pings you, and you answer with `belayd approve`, on a local web page, or in a native dialog. No answer in time means no.
 
 <p align="center"><img src="docs/assets/approval-page.png" width="620" alt="The belayd approval page with two waiting requests: a force push from Codex and npm test from Claude Code after the agent changed package.json"></p>
 

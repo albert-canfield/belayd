@@ -25,6 +25,7 @@ The first release. belayd sits between AI coding agents and your machine: one po
 ### Approvals
 
 - `belayd approve` (terminal console) and `belayd ui` (local web page) answer held calls. No answer before the timeout means no.
+- A `dialog` channel: the waiting hook shows a native OS dialog and only that click counts, so nothing on disk can answer for you.
 - Desktop notifications on macOS and Linux.
 
 ### Audit

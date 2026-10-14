@@ -1,4 +1,5 @@
 import type { CompiledPolicy } from '../policy/load.js';
+import { askDialog, type DialogAnswer } from './dialog.js';
 import { notify } from './notify.js';
 import {
   closeRequest,
@@ -44,7 +45,20 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
     expiresAt: now + timeout,
     pid: process.pid,
   };
-  createRequest(opts.belaydHome, req);
+  // File-based channels (console, web page) need a pending request on disk. The dialog
+  // does not, and when it is the only way to answer, nothing on disk can answer for you.
+  const fileChannels = approval.channels.includes('tty') || approval.channels.includes('web');
+  if (fileChannels) createRequest(opts.belaydHome, req);
+  let dialogAnswer: DialogAnswer | undefined;
+  if (approval.channels.includes('dialog')) {
+    const text = `${truncate(req.label, 300)}\n\n${req.reason}${req.ruleId ? ` (${req.ruleId})` : ''}`;
+    void askDialog(
+      `belayd: ${agentName(req.agent)} is waiting`,
+      text,
+      timeout / 1000,
+      opts.env,
+    ).then((a) => (dialogAnswer = a));
+  }
 
   const cleanup = () => closeRequest(opts.belaydHome, req.id);
   const onSignal = () => {
@@ -67,7 +81,7 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
         // the terminal console still works
       }
     }
-    if (approval.notify) {
+    if (approval.notify && fileChannels) {
       notify(
         'belayd needs a yes or no',
         `${truncate(req.label, 90)}\nRun: belayd approve`,
@@ -77,7 +91,14 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
 
     const poll = opts.pollMs ?? 150;
     for (;;) {
-      const d = readDecision(opts.belaydHome, req.id);
+      if (dialogAnswer === 'allow' || dialogAnswer === 'deny') {
+        return { decision: dialogAnswer, by: 'dialog', waitedMs: Date.now() - now };
+      }
+      if (dialogAnswer && !fileChannels) {
+        // Dialog timed out or could not be shown, and there is no other way to answer.
+        return { decision: approval.onTimeout, by: 'timeout', waitedMs: Date.now() - now };
+      }
+      const d = fileChannels ? readDecision(opts.belaydHome, req.id) : undefined;
       if (d) return { decision: d.decision, by: d.by, waitedMs: Date.now() - now };
       if (Date.now() >= req.expiresAt) {
         return { decision: approval.onTimeout, by: 'timeout', waitedMs: Date.now() - now };
@@ -89,6 +110,14 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
     process.off('SIGTERM', onSignal);
     process.off('SIGINT', onSignal);
   }
+}
+
+function agentName(agent: string): string {
+  return (
+    { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', mcp: 'An MCP client' }[
+      agent
+    ] ?? agent
+  );
 }
 
 function truncate(s: string, n: number): string {

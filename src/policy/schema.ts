@@ -56,7 +56,7 @@ export const PolicySchema = z
       .object({
         timeout: duration.optional(),
         onTimeout: z.enum(['deny', 'allow']).optional(),
-        channels: z.array(z.enum(['native', 'tty', 'web'])).optional(),
+        channels: z.array(z.enum(['native', 'tty', 'web', 'dialog'])).optional(),
         notify: z.boolean().optional(),
         port: z.number().int().min(1024).max(65535).optional(),
       })
