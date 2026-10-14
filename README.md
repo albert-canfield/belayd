@@ -89,7 +89,7 @@ With the default `balanced` policy:
 | `rm -rf node_modules dist` | quiet | Inside the project, and undo can bring it back |
 <!-- catches:end -->
 
-Every row above is checked by the test suite, together with [220 more](tests/policy/corpus.yaml) for each of the three presets.
+Every row above is checked by the test suite, together with [300 more](tests/policy/corpus.yaml) for each of the three presets.
 
 ## Undo, step by step
 
