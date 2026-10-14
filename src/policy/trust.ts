@@ -30,26 +30,38 @@ function write(belaydHome: string, data: Record<string, string>): void {
   fs.renameSync(tmp, storeFile(belaydHome));
 }
 
-/** Trust is keyed by where the file really is, so /tmp and /private/tmp are one entry. */
+/**
+ * Trust is keyed by the file's own path, with its folder resolved so /tmp and
+ * /private/tmp are one entry. The file itself is not resolved: a belayd.yaml that is
+ * a symlink to a trusted file elsewhere is a different file and starts untrusted.
+ */
 function key(file: string): string {
-  return canonicalPath(file);
+  const abs = path.resolve(file);
+  return path.join(canonicalPath(path.dirname(abs)), path.basename(abs));
 }
 
-export function fileHash(file: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+export function contentHash(content: string | Buffer): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-export function isTrusted(belaydHome: string, file: string): boolean {
+/** The content hash you trusted for this file, if any. */
+export function trustedHash(belaydHome: string, file: string): string | undefined {
+  return read(belaydHome)[key(file)];
+}
+
+/** Pass the content you already read, so the check and the use see the same bytes. */
+export function isTrusted(belaydHome: string, file: string, content?: string | Buffer): boolean {
   try {
-    return read(belaydHome)[key(file)] === fileHash(file);
+    return trustedHash(belaydHome, file) === contentHash(content ?? fs.readFileSync(file));
   } catch {
     return false;
   }
 }
 
-export function trustFile(belaydHome: string, file: string): void {
+/** Trusts exactly the content that was shown, not whatever the file holds a moment later. */
+export function trustFile(belaydHome: string, file: string, content?: string | Buffer): void {
   const data = read(belaydHome);
-  data[key(file)] = fileHash(file);
+  data[key(file)] = contentHash(content ?? fs.readFileSync(file));
   write(belaydHome, data);
 }
 
@@ -60,9 +72,4 @@ export function revokeTrust(belaydHome: string, file: string): boolean {
   delete data[k];
   write(belaydHome, data);
   return true;
-}
-
-/** A short fingerprint of the trust entry, so the policy cache notices trust changes. */
-export function trustKey(belaydHome: string, file: string): string {
-  return read(belaydHome)[key(file)] ?? '';
 }

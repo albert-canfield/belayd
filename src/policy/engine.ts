@@ -63,10 +63,18 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
   // they always apply, and a stricter rule from either layer still wins over them.
   const floor = strongest(policy.rules.final, s, env);
   const chosen = strongest(policy.rules.user, s, env) ?? strongest(policy.rules.preset, s, env);
-  const hit =
+  const own =
     floor && (!chosen || RULE_SEVERITY[floor.rule.decision] >= RULE_SEVERITY[chosen.rule.decision])
       ? floor
       : chosen;
+  // Rules from a project file you have not trusted come last and only count when they
+  // are stricter than what your own policy decided. They can never lower a verdict.
+  const extra = strongest(policy.rules.project ?? [], s, env, true);
+  const hit =
+    extra &&
+    ACTION_SEVERITY[extra.rule.decision] > ACTION_SEVERITY[own?.rule.decision ?? policy.default]
+      ? extra
+      : own;
 
   if (!hit)
     return {
@@ -75,7 +83,10 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
     };
 
   const { rule, detail } = hit;
-  const base = rule.reason ?? `matched rule ${rule.id}`;
+  const base =
+    (rule.layer === 'project'
+      ? "From this project's belayd.yaml, which you have not trusted: "
+      : '') + (rule.reason ?? `matched rule ${rule.id}`);
   const note = rule.match.dynamic || rule.match.parseError ? s.note : undefined;
   const reason = detail ? `${base} (${detail})` : note ? `${base} (${note})` : base;
   const finding: Finding = {
@@ -92,14 +103,22 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
   };
 }
 
+/** `untrusted`: a rule that fails to evaluate counts as matching, so it cannot be used to break checks. */
 function strongest(
   rules: LayeredRule[],
   s: Subject,
   env: MatchEnv,
+  untrusted = false,
 ): { rule: LayeredRule; detail?: string } | undefined {
   let best: { rule: LayeredRule; detail?: string } | undefined;
   for (const rule of rules) {
-    const m = matches(rule.match, s, env);
+    let m: ReturnType<typeof matches>;
+    try {
+      m = matches(rule.match, s, env);
+    } catch (err) {
+      if (!untrusted) throw err;
+      m = { matched: true, detail: 'the rule could not be checked' };
+    }
     if (!m.matched) continue;
     if (!best || RULE_SEVERITY[rule.decision] > RULE_SEVERITY[best.rule.decision]) {
       best = { rule, ...(m.detail ? { detail: m.detail } : {}) };

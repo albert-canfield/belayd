@@ -52,7 +52,7 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
         'If you did not edit ~/.belayd/cache yourself, something else did. Check belayd log.',
       );
     }
-    const count = policy.rules.final.length + policy.rules.user.length + policy.rules.preset.length;
+    const count = Object.values(policy.rules).reduce((n, rules) => n + rules.length, 0);
     line('ok', `Policy: ${policy.name} (${count} rules)`);
     for (const w of policy.warnings) line('warn', w);
   } catch (err) {

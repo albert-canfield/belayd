@@ -47,7 +47,7 @@ export interface Finding {
   reason: string;
   /** The part of the action the rule matched, e.g. one command inside a pipeline. */
   subject: string;
-  layer: 'final' | 'user' | 'preset';
+  layer: 'final' | 'user' | 'preset' | 'project';
 }
 
 export interface SubjectVerdict {

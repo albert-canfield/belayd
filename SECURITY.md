@@ -20,7 +20,7 @@ belayd catches mistakes made by an AI coding agent that you mostly trust, asks y
 - secrets leaving the machine in commands, fetches and MCP arguments
 - force pushes and other history rewrites, publishing, privilege escalation, infrastructure teardown
 - changes to belayd's own policy and to agent hook settings, which could switch belayd off
-- a hostile `belayd.yaml` shipped inside a repository: until you run `belayd trust`, a project policy can only add deny and ask rules; its allow rules, `disable`, weaker presets and defaults, `failMode: open`, `onTimeout: allow` and snapshot settings are ignored
+- a hostile `belayd.yaml` shipped inside a repository: until you run `belayd trust`, a project policy can only add deny and ask rules, and they count only where they are stricter than your own policy's verdict. Its allow rules, `disable`, weaker presets and defaults, the allow rules of a stricter preset, `failMode: open`, approval settings other than a shorter timeout, and snapshot settings are ignored. A symlinked `belayd.yaml` does not inherit the trust of its target, and one that is a named pipe or a device is refused rather than read
 - an agent answering its own approval request through `belayd approve`, the approval page's API or belayd's files
 
 **Out of scope.** belayd does not protect against:

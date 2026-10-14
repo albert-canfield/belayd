@@ -6,7 +6,9 @@ import {
   listPresets,
   PolicyError,
   presetsDir,
+  readPolicyText,
   type CompiledPolicy,
+  type LayeredRule,
 } from './load.js';
 import { DEFAULT_PORT } from '../approval/ui-state.js';
 import { formatIssues, PolicySchema, type PolicyFile, type Rule } from './schema.js';
@@ -16,38 +18,72 @@ import { formatIssues, PolicySchema, type PolicyFile, type Rule } from './schema
  * reaches this when the policy changed since the last call (see load.ts).
  */
 
-export interface CompileOptions {
-  /** False for a project file you have not reviewed with `belayd trust`. */
-  trusted?: boolean;
-  /** Your own policy ($BELAYD_HOME/belayd.yaml), which an untrusted project file builds on. */
-  baseFile?: string;
+export interface PolicySource {
+  file: string;
+  text: string;
 }
 
-const STRICTNESS: Record<string, number> = { 'yolo-with-undo': 0, balanced: 1, strict: 2 };
-const DEFAULT_ORDER: Record<string, number> = { allow: 0, pass: 1, ask: 2 };
+export interface CompileInput {
+  /** The policy file that applies: a project's belayd.yaml, your own, or one named explicitly. */
+  file?: PolicySource;
+  /** Your own policy ($BELAYD_HOME/belayd.yaml), which a project file builds on. */
+  base?: PolicySource;
+  /** False for a project file you have not reviewed with `belayd trust`. */
+  trusted: boolean;
+  /** Use this preset and no files. */
+  preset?: string;
+}
 
-export function compileFromFile(
-  file: string | undefined,
-  preset: string | undefined,
-  opts: CompileOptions = {},
-): CompiledPolicy {
-  if (!file) return compile(undefined, undefined, preset ?? DEFAULT_PRESET);
-  const user = readPolicyFile(file);
-  if (opts.trusted !== false) return compile(user, file, user.extends ?? DEFAULT_PRESET);
-  return compileUntrusted(user, file, opts.baseFile);
+const STRICTNESS: Record<string, number> = {
+  none: -1,
+  'yolo-with-undo': 0,
+  balanced: 1,
+  strict: 2,
+};
+const DEFAULT_ORDER: Record<string, number> = { allow: 0, pass: 1, ask: 2 };
+const DEFAULT_TIMEOUT = '120s';
+
+export function compilePolicy(input: CompileInput): CompiledPolicy {
+  if (!input.file) return compile(undefined, undefined, input.preset ?? DEFAULT_PRESET);
+  const file = input.file.file;
+  const user = parsePolicy(input.file.text, file);
+  const base = input.base ? parsePolicy(input.base.text, input.base.file) : undefined;
+  if (!input.trusted) return compileUntrusted(user, file, base, input.base?.file);
+  if (!base || !input.base) return compile(user, file, user.extends ?? DEFAULT_PRESET);
+
+  // A trusted project file builds on your own policy: your rules still apply inside the
+  // project, and the project's settings win where both set one. A project rule with the
+  // same id as one of yours replaces it.
+  const ids = new Set(user.rules.map((r) => r.id));
+  const merged: PolicyFile = {
+    ...base,
+    ...user,
+    rules: [...base.rules.filter((r) => !ids.has(r.id)), ...user.rules],
+    disable: [...new Set([...base.disable, ...user.disable])],
+    approval: { ...base.approval, ...user.approval },
+    snapshots: { ...base.snapshots, ...user.snapshots },
+  };
+  const extendsName = user.extends ?? base.extends ?? DEFAULT_PRESET;
+  const compiled = compile(merged, file, extendsName, new Set(base.disable));
+  return {
+    ...compiled,
+    name: `${compiled.preset} preset + ${input.base.file} + ${file}`,
+    files: [file, input.base.file],
+  };
 }
 
 /**
  * An untrusted project file can only make belayd stricter. Its deny and ask rules are
- * added on top of your own policy; allow rules, disable, weaker presets and defaults,
- * failMode: open, onTimeout: allow and snapshot settings are ignored, and said so.
+ * checked after your own policy and count only where they are stricter than its
+ * verdict. Allow rules, disable, weaker presets and defaults, approval settings other
+ * than a shorter timeout, failMode and snapshot settings are ignored, and said so.
  */
 function compileUntrusted(
   user: PolicyFile,
   file: string,
+  base: PolicyFile | undefined,
   baseFile: string | undefined,
 ): CompiledPolicy {
-  const base = baseFile ? readPolicyFile(baseFile) : undefined;
   const ignored: string[] = [];
   const baseExtends = base?.extends ?? DEFAULT_PRESET;
   let extendsName = baseExtends;
@@ -56,10 +92,9 @@ function compileUntrusted(
       extendsName = user.extends;
     else ignored.push(`extends: ${user.extends}`);
   }
-  const presetDefault = loadPresetChain(extendsName).reduce<string>(
-    (d, p) => p.default ?? d,
-    'pass',
-  );
+  const presetChain = (name: string) => (name === 'none' ? [] : loadPresetChain(name));
+  const chain = presetChain(extendsName);
+  const presetDefault = chain.reduce<string>((d, p) => p.default ?? d, 'pass');
   const effective = base?.default ?? presetDefault;
   let defaultVerdict = base?.default;
   if (user.default) {
@@ -72,36 +107,61 @@ function compileUntrusted(
     ignored.push(`${allows.length} allow rule${allows.length === 1 ? '' : 's'}`);
   if (user.disable.length > 0) ignored.push(`disable: [${user.disable.join(', ')}]`);
   if (user.failMode === 'open') ignored.push('failMode: open');
-  if (user.approval?.onTimeout === 'allow') ignored.push('approval.onTimeout: allow');
   if (user.snapshots) ignored.push('snapshots settings');
 
-  // onTimeout comes only from your own policy: an untrusted file cannot make silence a yes.
-  const approval = { ...user.approval };
-  delete approval.onTimeout;
+  // Approval settings decide who may answer and how; only a shorter wait is accepted.
+  const baseTimeout =
+    base?.approval?.timeout ??
+    chain.reduce<string | number | undefined>((t, p) => p.approval?.timeout ?? t, undefined) ??
+    DEFAULT_TIMEOUT;
+  let timeout: string | number | undefined;
+  for (const [k, v] of Object.entries(user.approval ?? {})) {
+    if (k === 'timeout' && toMs(v as string | number) < toMs(baseTimeout)) timeout = v as string;
+    else ignored.push(`approval.${k}`);
+  }
+
+  const seen = new Set<string>();
+  for (const r of user.rules) {
+    if (seen.has(r.id)) throw new PolicyError(`rule id "${r.id}" is used twice`, file);
+    seen.add(r.id);
+    if (r.final)
+      throw new PolicyError(`rule "${r.id}": only presets can mark rules as final`, file);
+  }
+
   const restricted: PolicyFile = {
-    version: 1,
+    ...(base ?? { version: 1, rules: [], disable: [] }),
     extends: extendsName,
-    rules: [
-      ...(base?.rules ?? []),
-      ...user.rules
-        .filter((r) => r.decision !== 'allow')
-        .map((r) => ({ ...r, id: `project-${r.id}` })),
-    ],
-    disable: base?.disable ?? [],
     ...(defaultVerdict ? { default: defaultVerdict } : {}),
-    approval: {
-      ...base?.approval,
-      ...approval,
-      ...(base?.approval?.onTimeout ? { onTimeout: base.approval.onTimeout } : {}),
-    },
-    ...(base?.failMode ? { failMode: base.failMode } : {}),
-    ...(base?.snapshots ? { snapshots: base.snapshots } : {}),
+    ...(user.failMode === 'closed' ? { failMode: 'closed' as const } : {}),
+    approval: { ...base?.approval, ...(timeout !== undefined ? { timeout } : {}) },
   };
-  const compiled = compile(restricted, baseFile ?? file, extendsName);
+  const compiled = compile(restricted, baseFile ?? file, extendsName, new Set(base?.disable ?? []));
+
+  // A stricter preset brings its asks and denies, not its allow rules: `extends: strict`
+  // must not turn `git log` from "the agent asks as usual" into a silent yes.
+  let { final, preset } = compiled.rules;
+  if (extendsName !== baseExtends) {
+    const baseAllows = new Set(
+      presetChain(baseExtends).flatMap((p) =>
+        p.rules.filter((r) => r.decision === 'allow').map((r) => r.id),
+      ),
+    );
+    const keep = (r: LayeredRule) => r.decision !== 'allow' || baseAllows.has(r.id);
+    final = final.filter(keep);
+    preset = preset.filter(keep);
+  }
   return {
     ...compiled,
     name: `${compiled.preset} preset${baseFile ? ` + ${baseFile}` : ''} + ${file} (not trusted)`,
     files: [file, ...(baseFile ? [baseFile] : [])],
+    rules: {
+      ...compiled.rules,
+      final,
+      preset,
+      project: user.rules
+        .filter((r) => r.decision !== 'allow')
+        .map((r) => ({ ...r, id: `project-${r.id}`, layer: 'project' })),
+    },
     trusted: false,
     warnings: [
       `${file} is not trusted yet, so only its stricter rules apply.` +
@@ -112,13 +172,7 @@ function compileUntrusted(
 }
 
 export function readPolicyFile(file: string): PolicyFile {
-  let text: string;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    throw new PolicyError(`cannot read the policy file (${(err as Error).message})`, file);
-  }
-  return parsePolicy(text, file);
+  return parsePolicy(readPolicyText(file), file);
 }
 
 export function parsePolicy(text: string, file?: string): PolicyFile {
@@ -133,10 +187,16 @@ export function parsePolicy(text: string, file?: string): PolicyFile {
   return result.data;
 }
 
+/**
+ * Builds the policy from a preset and one policy file. `optionalDisable` lists ids
+ * from your own file that a project file may have moved past, by choosing another
+ * preset; those are skipped when the preset has no such rule.
+ */
 export function compile(
   user: PolicyFile | undefined,
   userFile: string | undefined,
   presetName: string,
+  optionalDisable: ReadonlySet<string> = new Set(),
 ): CompiledPolicy {
   const chain = presetName === 'none' ? [] : loadPresetChain(presetName);
   const presetRules = new Map<string, Rule>();
@@ -158,6 +218,7 @@ export function compile(
     if (user.default) defaultVerdict = user.default;
     for (const id of user.disable) {
       if (!presetRules.has(id)) {
+        if (optionalDisable.has(id)) continue;
         throw new PolicyError(
           `disable: there is no rule "${id}" in the ${presetName} preset`,
           userFile,
@@ -187,10 +248,11 @@ export function compile(
       final: active.filter((r) => r.final).map((r) => ({ ...r, layer: 'final' })),
       user: (user?.rules ?? []).map((r) => ({ ...r, layer: 'user' })),
       preset: active.filter((r) => !r.final).map((r) => ({ ...r, layer: 'preset' })),
+      project: [],
     },
     disabled: [...disabled],
     approval: {
-      timeoutMs: toMs(approval?.timeout ?? '120s'),
+      timeoutMs: toMs(approval?.timeout ?? DEFAULT_TIMEOUT),
       onTimeout: approval?.onTimeout ?? 'deny',
       channels: approval?.channels ?? ['native', 'tty', 'web'],
       notify: approval?.notify ?? true,

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pc from 'picocolors';
-import { POLICY_FILE } from '../policy/load.js';
+import { POLICY_FILE, readPolicyText } from '../policy/load.js';
 import { isTrusted, revokeTrust, trustFile } from '../policy/trust.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 import { insideAgent } from './approve.js';
@@ -27,9 +27,11 @@ export async function trust(fileArg: string | undefined, opts: TrustOptions): Pr
     return 0;
   }
 
-  // Show what trusting unlocks, so the decision is an informed one.
-  const { readPolicyFile } = await import('../policy/compile.js');
-  const policy = readPolicyFile(file);
+  // Show what trusting unlocks, so the decision is an informed one. The bytes shown are
+  // the bytes trusted: an edit made after this read leaves the file untrusted.
+  const { parsePolicy } = await import('../policy/compile.js');
+  const text = readPolicyText(file);
+  const policy = parsePolicy(text, file);
   const unlocks: string[] = [];
   for (const r of policy.rules.filter((x) => x.decision === 'allow')) {
     unlocks.push(`allow rule ${pc.bold(r.id)}`);
@@ -43,11 +45,11 @@ export async function trust(fileArg: string | undefined, opts: TrustOptions): Pr
   if (policy.approval?.onTimeout === 'allow') unlocks.push('approval.onTimeout: allow');
   if (policy.snapshots?.enabled === false) unlocks.push('snapshots off (no undo)');
 
-  if (isTrusted(home, file)) {
+  if (isTrusted(home, file, text)) {
     console.log(`${file} is already trusted.`);
     return 0;
   }
-  trustFile(home, file);
+  trustFile(home, file, text);
   console.log(pc.green(`✔ Trusted ${file}`));
   if (unlocks.length > 0) {
     console.log(pc.dim('  It can now:'));

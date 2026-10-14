@@ -88,7 +88,8 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   const policyFile = opts.global
     ? path.join(belaydHome(), POLICY_FILE)
     : path.join(workspace, POLICY_FILE);
-  const writePolicy = !fs.existsSync(policyFile);
+  // lstat, not exists: a dangling symlink in its place is not a free spot to write to.
+  const writePolicy = !lstatOrUndefined(policyFile);
 
   console.log(pc.bold('belayd will:'));
   let n = 1;
@@ -132,9 +133,11 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   }
   if (writePolicy) {
     fs.mkdirSync(path.dirname(policyFile), { recursive: true });
-    fs.writeFileSync(policyFile, policyTemplate(preset));
+    const text = policyTemplate(preset);
+    // `wx` never follows a symlink planted where the file should go.
+    fs.writeFileSync(policyFile, text, { flag: 'wx' });
     // You just created it, so it is yours to trust.
-    if (!opts.global) trustFile(belaydHome(), policyFile);
+    if (!opts.global) trustFile(belaydHome(), policyFile, text);
   } else if (!opts.global && !isTrusted(belaydHome(), policyFile)) {
     console.log(
       pc.yellow(
@@ -325,4 +328,12 @@ async function confirm(yes: boolean | undefined, question: string): Promise<bool
 function tilde(p: string): string {
   const home = os.homedir();
   return p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
+}
+
+function lstatOrUndefined(file: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(file);
+  } catch {
+    return undefined;
+  }
 }

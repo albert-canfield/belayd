@@ -3,14 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { version } from '../version.js';
-import { isTrusted, trustKey } from './trust.js';
+import { contentHash, trustedHash } from './trust.js';
 import { ensurePrivateDir } from '../util/paths.js';
 import type { Rule } from './schema.js';
 
 export const POLICY_FILE = 'belayd.yaml';
 export const DEFAULT_PRESET = 'balanced';
 
-export type Layer = 'final' | 'user' | 'preset';
+/** `project` holds the rules of a project file you have not trusted: they can only add. */
+export type Layer = 'final' | 'user' | 'preset' | 'project';
 
 export interface LayeredRule extends Rule {
   layer: Layer;
@@ -22,7 +23,12 @@ export interface CompiledPolicy {
   preset: string;
   files: string[];
   default: 'pass' | 'ask' | 'allow';
-  rules: { final: LayeredRule[]; user: LayeredRule[]; preset: LayeredRule[] };
+  rules: {
+    final: LayeredRule[];
+    user: LayeredRule[];
+    preset: LayeredRule[];
+    project: LayeredRule[];
+  };
   disabled: string[];
   approval: {
     timeoutMs: number;
@@ -68,6 +74,10 @@ export function findPolicyFile(workspace: string, belaydHome: string): string | 
   return undefined;
 }
 
+/** Bump when the shape of CompiledPolicy changes, so old cache entries are not reused. */
+const CACHE_FORMAT = 2;
+const MAX_POLICY_BYTES = 1024 * 1024;
+
 /**
  * Loads the policy for a workspace. Parsing YAML and validating it costs tens of
  * milliseconds, which matters when a hook runs on every tool call, so the compiled
@@ -79,21 +89,31 @@ export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
     : (opts.policyPath ?? findPolicyFile(opts.workspace, opts.belaydHome));
 
   // Your own file and a file you name explicitly are trusted. A belayd.yaml inside the
-  // project is trusted only after `belayd trust`, pinned to its exact content.
+  // project is trusted only after `belayd trust`, pinned to its exact content, and it
+  // builds on your own file rather than replacing it.
   const globalFile = path.join(opts.belaydHome, POLICY_FILE);
   const isProjectFile =
     !opts.policyPath && file !== undefined && path.resolve(file) !== path.resolve(globalFile);
-  const trusted = !isProjectFile || isTrusted(opts.belaydHome, file!);
-  const baseFile = !trusted && fs.existsSync(globalFile) ? globalFile : undefined;
+  const baseFile = isProjectFile && fs.existsSync(globalFile) ? globalFile : undefined;
+
+  // Every file is read once: the trust check, the cache key and the compiler all see
+  // the same bytes, so nothing can swap the file in between.
+  const text = file ? readPolicyText(file) : undefined;
+  const baseText = baseFile ? readPolicyText(baseFile) : undefined;
+  const trusted = !isProjectFile || trustedHash(opts.belaydHome, file!) === contentHash(text ?? '');
 
   const key = opts.noCache
     ? undefined
-    : cacheKey(
-        file,
-        opts.preset,
-        `${trusted}\0${baseFile ?? ''}\0${file ? trustKey(opts.belaydHome, file) : ''}`,
-        baseFile,
-      );
+    : cacheKey([
+        String(CACHE_FORMAT),
+        version,
+        opts.preset ?? '',
+        file ?? '',
+        String(trusted),
+        baseFile ?? '',
+        text ?? '',
+        baseText ?? '',
+      ]);
   const cacheFile = key ? path.join(opts.belaydHome, 'cache', `policy-${key}.json`) : undefined;
   if (cacheFile) {
     try {
@@ -103,30 +123,58 @@ export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
     }
   }
 
-  const { compileFromFile } = await import('./compile.js');
-  const policy = compileFromFile(file, opts.preset, { trusted, ...(baseFile ? { baseFile } : {}) });
+  const { compilePolicy } = await import('./compile.js');
+  const policy = compilePolicy({
+    ...(file ? { file: { file, text: text! } } : {}),
+    ...(baseFile ? { base: { file: baseFile, text: baseText! } } : {}),
+    ...(opts.preset ? { preset: opts.preset } : {}),
+    trusted,
+  });
   if (cacheFile) writeCache(cacheFile, policy);
   return policy;
 }
 
-function cacheKey(
-  file: string | undefined,
-  preset: string | undefined,
-  trust: string,
-  baseFile: string | undefined,
-): string | undefined {
+/**
+ * Reads a policy file, refusing anything that is not a regular file of sane size. A
+ * repository can ship belayd.yaml as a named pipe or a link to /dev/zero, and a plain
+ * read would then hang every hook call.
+ */
+export function readPolicyText(file: string): string {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  } catch (err) {
+    throw new PolicyError(`cannot read the policy file (${(err as Error).message})`, file);
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new PolicyError('the policy file is not a regular file', file);
+    if (stat.size > MAX_POLICY_BYTES)
+      throw new PolicyError('the policy file is larger than 1 MB', file);
+    const buf = Buffer.alloc(stat.size);
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, got);
+      if (n === 0) break;
+      got += n;
+    }
+    return buf.subarray(0, got).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function cacheKey(parts: string[]): string | undefined {
   try {
     const hash = crypto.createHash('sha256');
-    hash.update(`${version}\0${preset ?? ''}\0${file ?? ''}\0${trust}\0`);
-    if (file) hash.update(fs.readFileSync(file));
-    if (baseFile) hash.update(fs.readFileSync(baseFile));
+    for (const part of parts) hash.update(`${part.length}:`).update(part);
     const dir = presetsDir();
     for (const name of fs.readdirSync(dir).sort()) {
       if (name.endsWith('.yaml')) hash.update(name).update(fs.readFileSync(path.join(dir, name)));
     }
     return hash.digest('hex').slice(0, 24);
   } catch {
-    return undefined; // unreadable file: compile without the cache and report the real error
+    return undefined; // compile without the cache and report the real error
   }
 }
 

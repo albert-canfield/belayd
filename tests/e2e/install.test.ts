@@ -140,4 +140,13 @@ describe('belayd init and uninstall for Claude Code', () => {
     expect(r.stderr).toMatch(/belayd init --global/);
     expect(fs.existsSync(path.join(sb.env.HOME!, '.claude', 'settings.local.json'))).toBe(false);
   });
+
+  it('does not write through a belayd.yaml symlink that points nowhere', () => {
+    const target = path.join(sb.dir, 'elsewhere.yaml');
+    fs.symlinkSync(target, path.join(sb.project, 'belayd.yaml'));
+    const r = belayd(sb, ['init', '--yes'], { env: NEW });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(r.stdout).toMatch(/not reviewed/);
+  });
 });
