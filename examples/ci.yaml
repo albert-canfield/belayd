@@ -5,14 +5,27 @@ version: 1
 extends: strict
 
 approval:
-  channels: [native]   # no console or web page in CI
+  channels: [native] # no console or web page in CI
   timeout: 5s
   notify: false
 
 rules:
   - id: allow-test-and-build
     match:
-      command: [npm test, npm run, pnpm test, pnpm run, pnpm install, npm ci, make, pytest, go test, cargo test, cargo build]
+      command:
+        [
+          npm test,
+          npm run,
+          pnpm test,
+          pnpm run,
+          pnpm install,
+          npm ci,
+          make,
+          pytest,
+          go test,
+          cargo test,
+          cargo build,
+        ]
     decision: allow
     reason: Building and testing is what this job is for.
 

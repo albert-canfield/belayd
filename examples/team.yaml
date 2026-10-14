@@ -21,7 +21,8 @@ rules:
   # Migrations change shared databases. A person runs them.
   - id: ask-before-migrations
     match:
-      command: [prisma migrate, pnpm prisma migrate, npx prisma migrate, rails db:migrate, alembic upgrade]
+      command:
+        [prisma migrate, pnpm prisma migrate, npx prisma migrate, rails db:migrate, alembic upgrade]
     decision: ask
     reason: Runs a database migration.
 

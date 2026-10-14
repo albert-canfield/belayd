@@ -6,7 +6,12 @@ extends: balanced
 rules:
   - id: no-edits-to-generated-code
     match:
-      writes: ['{workspace}/**/generated/**', '{workspace}/**/*.gen.ts', '{workspace}/**/__generated__/**']
+      writes:
+        [
+          '{workspace}/**/generated/**',
+          '{workspace}/**/*.gen.ts',
+          '{workspace}/**/__generated__/**',
+        ]
     decision: deny
     reason: This file is generated. Change the source and run the generator instead.
 
@@ -19,7 +24,8 @@ rules:
 
   - id: ask-before-deploys
     match:
-      command: [./scripts/deploy.sh, scripts/deploy.sh, fly deploy, vercel, kubectl apply, helm upgrade]
+      command:
+        [./scripts/deploy.sh, scripts/deploy.sh, fly deploy, vercel, kubectl apply, helm upgrade]
     decision: ask
     reason: Deploys to a shared environment.
 
