@@ -58,6 +58,8 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
 
 **It asks in the right place.** In an interactive Claude Code session, belayd's question shows up in Claude Code's own prompt. When nobody is watching the terminal (`claude -p`, Codex, a long background run), belayd holds the call and pings you, and you answer with `belayd approve` or on a local web page. No answer in time means no.
 
+<p align="center"><img src="docs/assets/approval-page.png" width="620" alt="The belayd approval page with two waiting requests: a force push from Codex and npm test from Claude Code after the agent changed package.json"></p>
+
 **It keeps a flight recorder.** Every tool call, what belayd decided, who approved it and whether it ran, in a local append-only log with a hash chain. `belayd replay` turns a session into a readable timeline, including the files each step changed.
 
 **It undoes.** belayd snapshots files before and after every step that can change them, shell commands included, in a shadow Git repository that never touches your own `.git`. `belayd undo 7` puts back exactly what step 7 changed. Claude Code's `/rewind` and Cursor's checkpoints can't undo what a shell command did. belayd can.
