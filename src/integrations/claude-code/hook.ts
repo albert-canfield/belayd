@@ -1,187 +1,38 @@
-import { record, sessionKey, summarizeInput } from '../../audit/record.js';
+import {
+  handleToolHook,
+  preToolUseDecision,
+  type Dialect,
+  type HandleDeps,
+  type HookInput,
+} from '../../hook/handle.js';
 import type { HookResult } from '../../hook/types.js';
-import { actionLabel } from '../../policy/label.js';
-import { capture } from '../../snapshots/capture.js';
-import { evaluate } from '../../policy/engine.js';
-import { loadPolicy } from '../../policy/load.js';
-import type { Action, ActionContext, Decision } from '../../policy/types.js';
-import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../../util/paths.js';
+import type { Action } from '../../policy/types.js';
 
-/** The fields belayd reads from a Claude Code hook payload. */
-export interface ClaudeHookInput {
-  session_id?: string;
-  cwd?: string;
-  hook_event_name?: string;
-  tool_name?: string;
-  tool_input?: Record<string, unknown>;
-  tool_use_id?: string;
-  permission_mode?: string;
-  /** Present when Cursor runs this hook through its Claude Code compatibility layer. */
-  cursor_version?: string;
-}
+export type ClaudeHookInput = HookInput;
 
 /** Agents that load Claude Code hooks from `.claude/settings*.json`. */
 export type Host = 'claude-code' | 'cursor';
 
-interface Deps {
-  env: NodeJS.ProcessEnv;
-  /** The hook timeout Claude Code was configured with, from `--timeout`. */
-  timeoutSec?: number;
-  /** Path to belayd's bin.js, used to start the approval page. */
-  binPath?: string;
+export const claudeDialect: Dialect = {
+  agent: (input, env) => detectHost(input, env),
+  toAction: (tool, input, cwd) => toAction(tool, asRecord(input), cwd),
+  workspace: (env) => env.CLAUDE_PROJECT_DIR,
+  // Claude Code shows its own prompt in attended sessions. `claude -p` and other
+  // unattended runs set CLAUDE_CODE_SESSION_ATTENDED=0 and would auto-deny instead.
+  // Cursor does not enforce "ask" from this hook at all.
+  canAskNatively: (agent, env) =>
+    agent === 'claude-code' && env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
+  respond(answer, reason) {
+    if (answer === 'pass') return { stdout: '', exitCode: 0 };
+    return preToolUseDecision(answer, reason);
+  },
+};
+
+export function handleClaudeCode(raw: string, deps: HandleDeps): Promise<HookResult> {
+  return handleToolHook(raw, deps, claudeDialect);
 }
 
-/** Older installs used a 30 second hook timeout and did not pass --timeout. */
-const DEFAULT_TIMEOUT_SEC = 30;
-/** Answer this long before the agent would give up on the hook. */
-const SAFETY_MARGIN_MS = 5000;
-
-export async function handleClaudeCode(raw: string, deps: Deps): Promise<HookResult> {
-  let input: ClaudeHookInput;
-  try {
-    input = JSON.parse(raw) as ClaudeHookInput;
-  } catch {
-    return deny(
-      'belayd could not read the hook input from the agent, so it is blocking this action to be safe.',
-    );
-  }
-  const event = input.hook_event_name ?? 'PreToolUse';
-  const host = detectHost(input, deps.env);
-  const cwd = canonicalPath(input.cwd ?? process.cwd());
-  const workspace = deps.env.CLAUDE_PROJECT_DIR
-    ? canonicalPath(deps.env.CLAUDE_PROJECT_DIR)
-    : findWorkspace(cwd);
-  const home = canonicalPath(homeDir(deps.env));
-  const stateDir = belaydHome(deps.env);
-  const started = Date.now();
-  const session = sessionKey(host, input.session_id);
-
-  if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
-    const snapshot = await afterSnapshot(stateDir, input, { cwd, workspace, home, host });
-    await record(stateDir, {
-      session,
-      phase: 'post',
-      at: started,
-      agent: host,
-      workspace,
-      cwd,
-      tool: input.tool_name,
-      toolUseId: input.tool_use_id,
-      outcome: event === 'PostToolUseFailure' ? 'failed' : 'ran',
-      snapshot,
-    });
-    return { stdout: '', exitCode: 0 };
-  }
-  if (event !== 'PreToolUse') return { stdout: '', exitCode: 0 };
-
-  const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
-  const audit = (
-    told: string,
-    extra: {
-      verdict?: string;
-      reason?: string;
-      ruleId?: string;
-      answeredBy?: string;
-      snapshot?: string;
-    },
-  ) =>
-    record(stateDir, {
-      session,
-      phase: 'pre',
-      at: started,
-      agent: host,
-      workspace,
-      cwd,
-      tool: input.tool_name,
-      toolUseId: input.tool_use_id,
-      kind: action.kind,
-      label: actionLabel(action),
-      input: summarizeInput(input.tool_input ?? {}),
-      decision: told,
-      durationMs: Date.now() - started,
-      ...extra,
-    });
-
-  try {
-    const ctx: ActionContext = {
-      agent: host,
-      ...(input.tool_name ? { toolName: input.tool_name } : {}),
-      ...(input.session_id ? { sessionId: input.session_id } : {}),
-      ...(input.tool_use_id ? { toolUseId: input.tool_use_id } : {}),
-      cwd,
-      workspace,
-      home,
-    };
-    const policy = await loadPolicy({ workspace, belaydHome: stateDir });
-    const decision = evaluate(action, ctx, policy, { belaydHome: stateDir });
-    const facts = {
-      verdict: decision.verdict,
-      reason: decision.reason,
-      ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
-    };
-    if (decision.verdict !== 'ask') {
-      const snapshot =
-        decision.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
-      await audit(decision.verdict, { ...facts, ...(snapshot ? { snapshot } : {}) });
-      return render(decision);
-    }
-
-    const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
-    // Loaded only when a person may need to answer; most tool calls never get here.
-    const { resolveAsk } = await import('../../approval/resolve.js');
-    const resolution = await resolveAsk({
-      decision,
-      action,
-      ctx,
-      policy,
-      belaydHome: stateDir,
-      env: deps.env,
-      deadlineMs: timeoutMs - SAFETY_MARGIN_MS - (Date.now() - started),
-      // Claude Code shows its own prompt in attended sessions. `claude -p` and other
-      // unattended runs set CLAUDE_CODE_SESSION_ATTENDED=0 and would auto-deny instead.
-      // Cursor does not enforce "ask" from this hook at all.
-      canAskNatively: host === 'claude-code' && deps.env.CLAUDE_CODE_SESSION_ATTENDED !== '0',
-      binPath: deps.binPath ?? process.argv[1] ?? '',
-    });
-    const snapshot =
-      resolution.verdict === 'deny' ? undefined : capture(stateDir, policy, action, ctx);
-    await audit(resolution.verdict, {
-      ...facts,
-      ...(resolution.answeredBy ? { answeredBy: resolution.answeredBy } : {}),
-      ...(snapshot ? { snapshot } : {}),
-    });
-    return output(resolution.verdict, resolution.reason);
-  } catch (err) {
-    const message = (err as Error).message;
-    await audit('deny', { verdict: 'error', reason: `belayd error: ${message}` });
-    return deny(
-      `belayd hit an error and is blocking this action to be safe: ${message}. ` +
-        'Ask the user to run `belayd doctor`.',
-    );
-  }
-}
-
-/** After a tool ran, capture the same scope again so undo knows what the step changed. */
-async function afterSnapshot(
-  stateDir: string,
-  input: ClaudeHookInput,
-  where: { cwd: string; workspace: string; home: string; host: Host },
-): Promise<string | undefined> {
-  try {
-    const action = toAction(input.tool_name ?? '', input.tool_input ?? {}, where.cwd);
-    const policy = await loadPolicy({ workspace: where.workspace, belaydHome: stateDir });
-    return capture(stateDir, policy, action, {
-      agent: where.host,
-      cwd: where.cwd,
-      workspace: where.workspace,
-      home: where.home,
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-export function detectHost(input: ClaudeHookInput, env: NodeJS.ProcessEnv): Host {
+export function detectHost(input: HookInput, env: NodeJS.ProcessEnv): Host {
   if (input.cursor_version || env.CURSOR_VERSION) return 'cursor';
   return 'claude-code';
 }
@@ -232,35 +83,6 @@ export function toAction(tool: string, input: Record<string, unknown>, cwd: stri
   return { kind: 'tool', name: tool, input };
 }
 
-function render(decision: Decision): HookResult {
-  const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
-  switch (decision.verdict) {
-    case 'pass':
-    case 'ask':
-      return { stdout: '', exitCode: 0 };
-    case 'allow':
-      return output('allow', `belayd: ${decision.reason}${rule}`);
-    case 'deny':
-      return deny(
-        `belayd blocked this: ${decision.reason}${rule} ` +
-          'Do not try to get around this with a different command. If it is really needed, explain why and let the user decide.',
-      );
-  }
-}
-
-function deny(reason: string): HookResult {
-  return output('deny', reason);
-}
-
-function output(permissionDecision: 'allow' | 'deny' | 'ask', reason: string): HookResult {
-  return {
-    stdout: JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision,
-        permissionDecisionReason: reason,
-      },
-    }),
-    exitCode: 0,
-  };
+export function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
