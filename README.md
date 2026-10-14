@@ -16,17 +16,9 @@ Coding agents are fast, confident, and running with your permissions. Most days 
 
 **belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI and any MCP server.
 
-```text
-● Bash  X=rm; bash -c "$X -rf ~"
-  ✖ belayd blocked this: This deletes the root of the file system, your home folder or a system folder.
-
-● Bash  sed -i '' 's/v1/v2/' src/api.ts && rm src/legacy.ts
-
-$ belayd undo
-  restore  src/api.ts     +3 -3
-  restore  src/legacy.ts
-✔ Undid 2 file changes.  Changed your mind? belayd redo
-```
+<p align="center">
+  <img src="docs/assets/demo.gif" width="100%" alt="belayd blocking a curl-to-bash install and a hidden rm -rf, replaying an agent session where it stopped rm -rf ~ and a read of .env, then undoing the step that broke the build">
+</p>
 
 ## Up and running in two minutes
 
@@ -172,18 +164,19 @@ belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 ## How it works
 
 ```text
- Claude Code     Codex      MCP client
-      │            │            │
-      └── hooks ───┴── gateway ─┘        one short process per tool call
-                   │
-          ┌────────▼────────┐
-          │ belayd          │  parse the command, apply your policy
-          │                 │  ask a person if needed
-          │                 │  snapshot files, write the audit log
-          └────────┬────────┘
-                   │  allow · ask · deny
-                   ▼
-            your shell and files
+  Claude Code · Codex · Copilot CLI · Gemini CLI      any MCP client
+                        │                                   │
+                      hooks                              gateway
+                        └─────────────────┬─────────────────┘
+                                          │   one short process per tool call
+                                 ┌────────▼────────┐
+                                 │ belayd          │  parse the command, apply your policy
+                                 │                 │  ask a person if needed
+                                 │                 │  snapshot files, write the audit log
+                                 └────────┬────────┘
+                                          │  allow · ask · deny
+                                          ▼
+                                your shell and files
 ```
 
 Hooks are the agents' own extension points, so belayd needs no wrapper around your agent and no daemon. Everything lives in `~/.belayd`: the audit database, the snapshots and pending approvals.
