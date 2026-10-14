@@ -103,7 +103,7 @@ export async function sessions(opts: Common & { limit?: string }): Promise<numbe
         .join(' ');
       console.log(
         `${pc.bold(shortSession(s.session))}  ${AGENTS[s.agent] ?? s.agent}  ${path.basename(s.workspace)}  ` +
-          `${pc.dim(when(s.started))}  ${s.steps} steps ${flags}`,
+          `${pc.dim(when(s.started))}  ${s.steps} step${s.steps === 1 ? '' : 's'} ${flags}`,
       );
     }
     console.log(pc.dim('\nReplay one: belayd replay <id>    Undo a step: belayd undo <step>'));
@@ -182,7 +182,7 @@ export function printReplay(events: StoredEvent[], changes = new Map<number, Cha
   const minutes = Math.max(1, Math.round((last.at - first.at) / 60_000));
   console.log(
     `${pc.bold(`Session ${shortSession(first.session)}`)}  ${AGENTS[first.agent] ?? first.agent} · ${path.basename(first.workspace)} · ` +
-      `${when(first.at)} · ${minutes} min · ${pre.length} steps`,
+      `${when(first.at)} · ${minutes} min · ${pre.length} step${pre.length === 1 ? '' : 's'}`,
   );
   const blocked = pre.filter((e) => e.decision === 'deny').length;
   const asked = pre.filter((e) => e.verdict === 'ask').length;
