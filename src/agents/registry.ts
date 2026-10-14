@@ -81,8 +81,30 @@ export const AGENTS: readonly AgentEntry[] = [
     id: 'gemini',
     name: 'Gemini CLI',
     aliases: ['gemini-cli'],
-    support: 'planned',
-    detect: (env) => exists(home(env), '.gemini'),
+    support: 'hooks',
+    detect: (env) => exists(env.GEMINI_CLI_HOME ?? home(env), '.gemini'),
+    dialect: () => import('./gemini/hook.js').then((m) => m.geminiDialect),
+    setup: () => import('./gemini/setup.js').then((m) => m.geminiSetup),
+  },
+  {
+    id: 'claude-desktop',
+    name: 'Claude desktop app',
+    aliases: ['claude-app'],
+    support: 'host',
+    runsHooksOf: 'claude-code',
+    // Its coding sessions run Claude Code with the same settings and hooks.
+    detect: (env) =>
+      exists('/Applications/Claude.app') ||
+      exists(home(env), 'Library', 'Application Support', 'Claude'),
+  },
+  {
+    id: 'chatgpt',
+    name: 'ChatGPT desktop app',
+    aliases: ['codex-app', 'codex-desktop'],
+    support: 'host',
+    runsHooksOf: 'codex',
+    // Its Codex agent reads the same ~/.codex configuration, hooks.json included.
+    detect: () => exists('/Applications/ChatGPT.app') || exists('/Applications/Codex.app'),
   },
   {
     id: 'ollama',

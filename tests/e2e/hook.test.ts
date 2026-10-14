@@ -193,3 +193,19 @@ describe('what a step changed', () => {
     expect(decision(r.stdout)).toBe('ask');
   });
 });
+
+describe('a hook command run by a different agent', () => {
+  it('answers in the dialect of the payload it was sent', () => {
+    // Gemini CLI can import Claude Code's hooks, so `hook claude-code` gets Gemini's JSON.
+    const r = belayd(sb, ['hook', 'claude-code'], {
+      input: JSON.stringify({
+        hook_event_name: 'BeforeTool',
+        session_id: 'g',
+        cwd: sb.project,
+        tool_name: 'run_shell_command',
+        tool_input: { command: 'rm -rf ~' },
+      }),
+    });
+    expect(JSON.parse(r.stdout)).toMatchObject({ decision: 'deny' });
+  });
+});

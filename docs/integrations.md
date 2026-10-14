@@ -188,17 +188,21 @@ Strategy: native hooks with `failClosed: true`, native `ask` for shell and MCP, 
 
 ## Gemini CLI
 
-Update 14 Oct 2026: the Gemini CLI docs now say that unpaid-tier and Google One users were moved to a new Antigravity CLI on 18 June 2026. Gemini CLI remains for paid and API users. Its hook contract below is still accurate (checked against the hooks reference: `BeforeTool` returns `{"decision": "deny", "reason": ...}`, exit 2 blocks, other exit codes warn and continue, timeouts are in milliseconds, there is no tool call id). belayd v0.1 does not ship a Gemini adapter; the next step is to look at Antigravity CLI's extension points and support whichever has the users.
+Supported since 14 Oct 2026. Sources: [Hooks](https://geminicli.com/docs/hooks/), [Hooks reference](https://geminicli.com/docs/hooks/reference/), and the tool and parameter names in the 0.64.0 package itself.
 
-Sources: [Hooks](https://geminicli.com/docs/hooks/), [Hooks reference](https://geminicli.com/docs/hooks/reference/), [Policy engine](https://geminicli.com/docs/reference/policy-engine/), [Trusted folders](https://geminicli.com/docs/cli/trusted-folders/). Stable v0.63.0 (6 Oct 2026).
+- Hooks live in `.gemini/settings.json` (project, only in trusted folders), `~/.gemini/settings.json` (user; `GEMINI_CLI_HOME` moves the home folder) and `/etc/gemini-cli/settings.json`, and are on by default. Each event has matcher groups like Claude Code's, but the matcher is a regular expression (`.*` for every tool) and `timeout` is in milliseconds (default 60000).
+- Payload: `hook_event_name` (`BeforeTool`, `AfterTool`), `session_id`, `transcript_path`, `cwd`, `timestamp`, `tool_name`, `tool_input`, and `tool_response` after the call. No call id, so belayd pairs before and after events itself for undo. Hooks get `GEMINI_PROJECT_DIR`.
+- Answer: `{"decision": "allow" | "deny", "reason": "..."}`. Exit 2 blocks; any other failure only warns and lets the tool run, so belayd's command turns a crash into exit 2. Hooks cannot ask, so belayd holds the call and asks the person itself.
+- Tools (0.64.0): `run_shell_command` (`command`, `dir_path`), `read_file` (`file_path`), `read_many_files` (`include`), `write_file` (`file_path`, `content`), `replace` (`file_path`, `old_string`, `new_string`), `glob` and `grep_search` (`pattern`, `dir_path`, `include_pattern`), `list_directory`, `web_fetch` (`prompt` with the URLs in it), `google_web_search`. MCP tools are `mcp_<server>_<tool>`.
+- `gemini` can import Claude Code's hooks into its own settings, so belayd's Claude Code hook command may receive Gemini's JSON. `belayd hook` recognises the payload and answers in Gemini's format.
+- belayd installs into `.gemini/settings.json` (kept out of Git, with a warning if the file is committed, since the hook names paths on this machine) or `~/.gemini/settings.json` with `--global`.
+- Tried live 14 Oct 2026 with Gemini CLI 0.64.0 against a local stand-in for the Gemini API (`GOOGLE_GEMINI_BASE_URL`), so no Google account was involved: in `--yolo` mode, `cat .env` was blocked ("Tool execution blocked: belayd blocked this"), an allowed `echo hello > greeting.txt` ran, and `belayd undo` removed the file.
+- Free and Google One users moved to Antigravity CLI in June 2026; Gemini CLI remains for paid and API users. Antigravity CLI is planned.
 
-- Hooks in `~/.gemini/settings.json` and `.gemini/settings.json`, on by default since v0.26. `BeforeTool` can deny (`{"decision": "deny", "reason": ...}` or exit 2) and rewrite arguments, but cannot ask. Timeouts are in milliseconds, default 60000.
-- A separate TOML policy engine supports `allow`, `deny` and `ask_user`, from `~/.gemini/policies/*.toml`. The workspace policy tier is currently broken (issue #18186).
-- Tools: `run_shell_command`, `read_file`, `read_many_files`, `write_file`, `replace`, `glob`, `grep_search`, `web_fetch`, `google_web_search`, and MCP tools as `mcp_<server>_<tool>`.
-- Non-zero exits other than 2 and polluted stdout fail open.
-- Has its own `/restore` checkpointing (shadow Git repo, off by default).
+## Desktop apps
 
-Strategy: `BeforeTool` and `AfterTool` hooks running `belayd hook gemini`, out-of-band approval for ask, optional compile of ask rules into `~/.gemini/policies/belayd.toml`. Effort: 3 to 5 days plus 2 days E2E.
+- **Claude desktop app.** Its coding sessions run Claude Code, which loads the usual Claude Code settings, so belayd's Claude Code hooks apply (set up with `belayd init --global` to cover every folder). Its MCP servers live in `claude_desktop_config.json` and can be put behind belayd with `belayd mcp wrap`. Not tried in a live session (a GUI app).
+- **ChatGPT desktop app.** Its Codex agent reads the same `~/.codex` configuration as Codex CLI, `hooks.json` included ([Codex hooks](https://developers.openai.com/codex/hooks)), so belayd's Codex hooks apply (`belayd init --agent codex --global`). Not tried in a live session (a GUI app); the same hooks were tried live with Codex CLI.
 
 ## Ollama
 

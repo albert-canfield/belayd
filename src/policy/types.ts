@@ -1,5 +1,14 @@
 export type AgentId =
-  'claude-code' | 'codex' | 'cursor' | 'copilot' | 'gemini' | 'ollama' | 'mcp' | 'cli';
+  | 'claude-code'
+  | 'codex'
+  | 'cursor'
+  | 'copilot'
+  | 'gemini'
+  | 'ollama'
+  | 'claude-desktop'
+  | 'chatgpt'
+  | 'mcp'
+  | 'cli';
 
 /** What an agent wants to do, independent of which agent asked. */
 export type Action =

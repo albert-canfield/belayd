@@ -14,7 +14,7 @@
 
 Coding agents are fast, confident, and running with your permissions. Most days that's great. Then one of them force pushes to main, reads your `.env` into its context, or tidies up the wrong folder, and you find out afterwards.
 
-**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI and any MCP server.
+**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI and any MCP server.
 
 ```text
 ● Bash  X=rm; bash -c "$X -rf ~"
@@ -155,7 +155,10 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
 | Copilot CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
 | Ollama | ✓, through the agents it starts | Through those agents | ✓ | ✓ | `ollama launch claude`, `codex` and `copilot` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
-| Gemini CLI, Antigravity CLI, OpenCode | Planned | | | | |
+| Gemini CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Gemini CLI hooks (`BeforeTool`, `AfterTool`) |
+| Claude desktop app | ✓ (not tried in a live session) | Claude Code's prompt | ✓ | ✓ | Its coding sessions run Claude Code's hooks |
+| ChatGPT desktop app | ✓ (not tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Its Codex agent runs Codex's hooks from `~/.codex` |
+| Antigravity CLI, OpenCode | Planned | | | | |
 <!-- agents:end -->
 
 Codex can't show its own prompt from a hook (it treats a hook's "ask" as an error and runs the command), so belayd never sends it one: it holds the call and asks you itself.
