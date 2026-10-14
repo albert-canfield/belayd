@@ -42,6 +42,8 @@ const STRICTNESS: Record<string, number> = {
 };
 const DEFAULT_ORDER: Record<string, number> = { allow: 0, pass: 1, ask: 2 };
 const DEFAULT_TIMEOUT = '120s';
+/** A project file cannot shorten the wait for a person below this. */
+const MIN_UNTRUSTED_TIMEOUT_MS = 10_000;
 
 export function compilePolicy(input: CompileInput): CompiledPolicy {
   if (!input.file) return compile(undefined, undefined, input.preset ?? DEFAULT_PRESET);
@@ -114,9 +116,20 @@ function compileUntrusted(
     base?.approval?.timeout ??
     chain.reduce<string | number | undefined>((t, p) => p.approval?.timeout ?? t, undefined) ??
     DEFAULT_TIMEOUT;
+  // When your own policy turns silence into a yes, a shorter wait is not stricter at all.
+  const baseOnTimeout =
+    base?.approval?.onTimeout ??
+    chain.reduce<string | undefined>((t, p) => p.approval?.onTimeout ?? t, undefined);
   let timeout: string | number | undefined;
   for (const [k, v] of Object.entries(user.approval ?? {})) {
-    if (k === 'timeout' && toMs(v as string | number) < toMs(baseTimeout)) timeout = v as string;
+    const ms = k === 'timeout' ? toMs(v as string | number) : 0;
+    if (
+      k === 'timeout' &&
+      baseOnTimeout !== 'allow' &&
+      ms < toMs(baseTimeout) &&
+      ms >= MIN_UNTRUSTED_TIMEOUT_MS
+    )
+      timeout = v as string;
     else ignored.push(`approval.${k}`);
   }
 

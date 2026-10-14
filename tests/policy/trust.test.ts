@@ -140,6 +140,17 @@ describe('project policy trust', () => {
     fs.writeFileSync(file, 'version: 1\napproval: { timeout: 30s }\n');
     policy = await loadPolicy({ workspace: dir, belaydHome: home });
     expect(policy.approval.timeoutMs).toBe(30_000);
+
+    // Not below 10 seconds, and not at all when your own policy says silence means yes.
+    fs.writeFileSync(file, 'version: 1\napproval: { timeout: 1ms }\n');
+    expect((await loadPolicy({ workspace: dir, belaydHome: home })).approval.timeoutMs).toBe(
+      120_000,
+    );
+    writeGlobal('version: 1\napproval: { onTimeout: allow }\n');
+    fs.writeFileSync(file, 'version: 1\napproval: { timeout: 30s }\n');
+    expect((await loadPolicy({ workspace: dir, belaydHome: home })).approval.timeoutMs).toBe(
+      120_000,
+    );
   });
 
   it('takes the questions of a stricter preset, not its allow rules', async () => {
