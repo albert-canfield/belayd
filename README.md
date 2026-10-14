@@ -36,7 +36,7 @@ cd your-project
 belayd init
 ```
 
-`init` finds Claude Code (and Codex, if you use it), shows you exactly what it will add to their settings, keeps a backup, and writes a `belayd.yaml` for the project. Restart your agent and you're covered. Nothing ever leaves your machine.
+`init` finds the coding agents on your machine, shows you exactly what it will add to their settings, keeps a backup, and writes a `belayd.yaml` for the project. Restart your agent and you're covered. Nothing ever leaves your machine.
 
 Try it without an agent:
 
@@ -146,14 +146,16 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 
 ## Supported agents
 
+<!-- agents:start -->
 | Agent | Blocks | Asks you | Audit | Undo | How |
 |---|---|---|---|---|---|
 | Claude Code | ✓ | Its own prompt, or `belayd approve` when headless | ✓ | ✓ | PreToolUse and PostToolUse hooks |
-| Codex CLI | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
+| Codex | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
 | Copilot CLI | Partly, not yet tried live | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI runs Claude Code's hooks from the repository |
-| Gemini CLI, Antigravity CLI, OpenCode | Planned | | | | |
+| Gemini CLI, Antigravity CLI, OpenCode, Ollama | Planned | | | | |
+<!-- agents:end -->
 
 Codex can't show its own prompt from a hook (it treats a hook's "ask" as an error and runs the command), so belayd never sends it one: it holds the call and asks you itself.
 

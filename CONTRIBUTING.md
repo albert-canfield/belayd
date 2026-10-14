@@ -43,11 +43,23 @@ Tests never write to your real agent configuration. The end-to-end tests run the
 | `src/policy/subjects.ts`, `match.ts`, `engine.ts` | What a rule is matched against, and how decisions combine |
 | `presets/` | The built-in policies, in plain YAML |
 | `src/hook/` | The hot path for every tool call, shared by all agents |
-| `src/integrations/` | Claude Code, Codex and the MCP gateway |
+| `src/agents/` | One adapter per agent, and the registry that lists them |
+| `src/integrations/mcp/` | The MCP gateway |
 | `src/approval/` | Held calls, the terminal console and the local web page |
 | `src/audit/` | The append-only log |
 | `src/snapshots/` | Shadow repository snapshots, undo and redo |
 | `docs/` | Research, the plan, and the integration notes per agent |
+
+## Add an agent
+
+Every agent is one adapter in `src/agents/<id>/` and one entry in `src/agents/registry.ts`. Nothing in the policy engine, the CLI or the audit log needs to change.
+
+1. Read the agent's hook documentation and write down, in `docs/integrations.md`: where hook files live, the payload it sends, the answer it reads, whether it can ask, and whether a failed or timed-out hook blocks or lets the tool run.
+2. Write `hook.ts` with a `Dialect` (`src/agents/types.ts`): `parse` turns the agent's JSON into a `ToolEvent`, `toAction` maps its tool names to belayd actions, `respond` answers in its format, and `sample` and `verdictOf` let the shared tests drive it.
+3. Write `setup.ts` with an `AgentSetup`: where `init` writes the hooks, how `uninstall` removes only belayd's entries, and what `belayd doctor` checks.
+4. Add the entry to the registry. `tests/agents/conformance.test.ts` then runs the same checks against it as against every other agent: it must block `rm -rf ~`, stay quiet for `npm test`, block on input it cannot read, never let a question through unanswered, and record what ran.
+5. If the agent cannot show a prompt from a hook, answer `false` from `canAskNatively`: belayd then holds the call and asks the person itself. If a hook timeout lets the tool run, keep the hook's `--timeout` below the agent's limit so belayd answers first.
+6. Try it in a real session, with a throwaway config folder, before calling it supported.
 
 ## Style
 

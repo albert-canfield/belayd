@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { AGENTS } from '../src/agents/registry.js';
 import { evaluate } from '../src/policy/engine.js';
 import { loadPolicy } from '../src/policy/load.js';
 import type { ActionContext, Verdict } from '../src/policy/types.js';
@@ -49,4 +50,17 @@ describe('README "What it catches" table', () => {
       expect(d.verdict, d.reason).toBe(WORDS[row.word]);
     });
   }
+});
+
+describe('README agents table', () => {
+  const agents = readme.split('<!-- agents:start -->')[1]?.split('<!-- agents:end -->')[0] ?? '';
+
+  it('lists every agent belayd knows, as supported or planned', () => {
+    for (const agent of AGENTS) {
+      const row = agents.split('\n').find((l) => l.includes(agent.name));
+      expect(row, agent.name).toBeDefined();
+      if (agent.support === 'planned') expect(row, agent.name).toMatch(/Planned/);
+      else expect(row, agent.name).not.toMatch(/Planned/);
+    }
+  });
 });
