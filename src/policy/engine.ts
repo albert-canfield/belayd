@@ -18,6 +18,8 @@ const RULE_SEVERITY: Record<RuleDecision, number> = { allow: 0, ask: 1, deny: 2 
 
 export interface EvaluateOptions {
   belaydHome: string;
+  /** Files the agent changed earlier in this session. */
+  sessionWrites?: Set<string>;
 }
 
 export function evaluate(
@@ -27,7 +29,7 @@ export function evaluate(
   opts: EvaluateOptions,
 ): Decision {
   const subjects = buildSubjects(action, ctx);
-  const env = createMatchEnv(ctx, opts.belaydHome);
+  const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
   const results = subjects.map((s) => decideSubject(s, policy, env));
 
   if (results.length === 0) {

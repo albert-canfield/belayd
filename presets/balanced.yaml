@@ -202,6 +202,11 @@ rules:
     decision: ask
     reason: Throws away uncommitted work.
 
+  - id: ask-changed-runner
+    match: { changedRunner: true }
+    decision: ask
+    reason: Runs scripts or hooks from a file the agent changed in this session. Look at that change before it runs.
+
   - id: ask-dynamic-command
     match: { dynamic: true }
     decision: ask

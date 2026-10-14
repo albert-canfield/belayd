@@ -23,6 +23,8 @@ export const MatchSchema = z
     inlineCode: z.boolean().optional(),
     parseError: z.boolean().optional(),
     remote: z.boolean().optional(),
+    changedRunner: z.boolean().optional(),
+    changedScript: z.boolean().optional(),
   })
   .strict();
 

@@ -1,4 +1,6 @@
 import { record, sessionKey, summarizeInput } from '../audit/record.js';
+import { addSessionWrites, sessionWrites } from '../audit/session.js';
+import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
 import { actionLabel } from '../policy/label.js';
 import { loadPolicy } from '../policy/load.js';
@@ -81,6 +83,11 @@ export async function handleToolHook(
       const action = dialect.toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
       const policy = await loadPolicy({ workspace, belaydHome: stateDir });
       snapshot = capture(stateDir, policy, action, ctxBase);
+      addSessionWrites(
+        stateDir,
+        session,
+        buildSubjects(action, ctxBase).flatMap((s) => s.writes),
+      );
     } catch {
       // recording the outcome matters more than the snapshot
     }
@@ -136,7 +143,10 @@ export async function handleToolHook(
       ...(input.tool_use_id ? { toolUseId: input.tool_use_id } : {}),
     };
     const policy = await loadPolicy({ workspace, belaydHome: stateDir });
-    const decision = evaluate(action, ctx, policy, { belaydHome: stateDir });
+    const decision = evaluate(action, ctx, policy, {
+      belaydHome: stateDir,
+      sessionWrites: sessionWrites(stateDir, session),
+    });
     const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
     const facts = {
       verdict: decision.verdict,

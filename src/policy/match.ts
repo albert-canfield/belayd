@@ -13,15 +13,22 @@ const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform ==
 export interface MatchEnv {
   ctx: ActionContext;
   belaydHome: string;
+  /** Files the agent changed earlier in this session. */
+  sessionWrites: Set<string>;
   /** Lazily loaded values from the workspace `.env` files. */
   envValues(): Map<string, string>;
 }
 
-export function createMatchEnv(ctx: ActionContext, belaydHome: string): MatchEnv {
+export function createMatchEnv(
+  ctx: ActionContext,
+  belaydHome: string,
+  sessionWrites: Set<string> = new Set(),
+): MatchEnv {
   let cached: Map<string, string> | undefined;
   return {
     ctx,
     belaydHome,
+    sessionWrites,
     envValues: () => (cached ??= loadEnvValues(ctx.workspace)),
   };
 }
@@ -62,6 +69,16 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
   if (m.inlineCode !== undefined && s.inlineCode !== m.inlineCode) return no;
   if (m.parseError !== undefined && s.parseError !== m.parseError) return no;
   if (m.remote !== undefined && s.remote !== m.remote) return no;
+  if (m.changedRunner !== undefined) {
+    const hit = s.drivenBy.find((d) => changed(d, env.sessionWrites));
+    if (Boolean(hit) !== m.changedRunner) return no;
+    if (hit) return { matched: true, detail: hit };
+  }
+  if (m.changedScript !== undefined) {
+    const hit = s.runs.find((r) => env.sessionWrites.has(r));
+    if (Boolean(hit) !== m.changedScript) return no;
+    if (hit) return { matched: true, detail: hit };
+  }
   if (m.secrets !== undefined) {
     const found = s.outbound.length > 0 ? findSecrets(s.outbound.join('\n'), env.envValues()) : [];
     if (found.length > 0 !== m.secrets) return no;
@@ -74,6 +91,13 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
 }
 
 const no: MatchResult = { matched: false };
+
+/** A trailing slash means "anything inside this folder". */
+function changed(target: string, writes: Set<string>): boolean {
+  if (!target.endsWith('/')) return writes.has(target);
+  for (const w of writes) if (w.startsWith(target)) return true;
+  return false;
+}
 
 /** `git push` matches program `git` whose first positional is `push`. Words may use `*`. */
 function commandMatches(pattern: string, s: Subject): boolean {

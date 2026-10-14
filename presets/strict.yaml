@@ -64,6 +64,11 @@ rules:
     decision: ask
     reason: Runs inline code (for example python -c or node -e) that belayd cannot check.
 
+  - id: ask-changed-script
+    match: { changedScript: true }
+    decision: ask
+    reason: Runs a script the agent wrote or changed in this session.
+
   - id: allow-known-domains
     match:
       tool: [fetch]

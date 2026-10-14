@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { record, sessionKey, summarizeInput } from '../../audit/record.js';
+import { addSessionWrites, sessionWrites } from '../../audit/session.js';
+import { buildSubjects } from '../../policy/subjects.js';
 import { evaluate } from '../../policy/engine.js';
 import { actionLabel } from '../../policy/label.js';
 import { loadPolicy } from '../../policy/load.js';
@@ -101,6 +103,13 @@ export function runGateway(opts: GatewayOptions): Promise<number> {
     const finish = async (call: { action: Action; ctx: ActionContext }, outcome: string) => {
       const policy = await loadPolicy({ workspace, belaydHome: stateDir }).catch(() => undefined);
       const snapshot = policy ? capture(stateDir, policy, call.action, call.ctx) : undefined;
+      if (outcome === 'ran') {
+        addSessionWrites(
+          stateDir,
+          session,
+          buildSubjects(call.action, call.ctx).flatMap((s) => s.writes),
+        );
+      }
       await record(stateDir, {
         session,
         phase: 'post',
@@ -152,7 +161,10 @@ export function runGateway(opts: GatewayOptions): Promise<number> {
         });
       try {
         const policy = await loadPolicy({ workspace, belaydHome: stateDir });
-        const decision = evaluate(action, ctx, policy, { belaydHome: stateDir });
+        const decision = evaluate(action, ctx, policy, {
+          belaydHome: stateDir,
+          sessionWrites: sessionWrites(stateDir, session),
+        });
         const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
         let verdict: string = decision.verdict;
         let reason = decision.reason + rule;
