@@ -5,48 +5,12 @@ import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
 import { actionLabel } from '../policy/label.js';
 import { loadPolicy } from '../policy/load.js';
-import type { Action, ActionContext, AgentId } from '../policy/types.js';
+import type { Answer, Dialect } from '../agents/types.js';
+import type { ActionContext } from '../policy/types.js';
 import { capture } from '../snapshots/capture.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 import type { HookResult } from './types.js';
 import { startWatchdog } from './watchdog.js';
-
-/** The fields belayd reads from a hook payload. Claude Code, Codex and Cursor all send these. */
-export interface HookInput {
-  session_id?: string;
-  cwd?: string;
-  hook_event_name?: string;
-  tool_name?: string;
-  tool_input?: unknown;
-  tool_use_id?: string;
-  permission_mode?: string;
-  /** Present when Cursor runs a Claude Code hook through its compatibility layer. */
-  cursor_version?: string;
-  /** Claude Code always sends this; Copilot CLI's compatible payload does not. */
-  transcript_path?: string;
-  /** Copilot CLI sends an ISO 8601 string here. */
-  timestamp?: unknown;
-}
-
-/** What belayd finally tells the agent. */
-export type Answer = 'allow' | 'ask' | 'deny' | 'pass';
-
-/** How one agent speaks the hook protocol. */
-export interface Dialect {
-  /** The agent that sent this payload. */
-  agent(input: HookInput, env: NodeJS.ProcessEnv): AgentId;
-  toAction(tool: string, input: unknown, cwd: string): Action;
-  /** The project root, when the agent tells us. */
-  workspace?(env: NodeJS.ProcessEnv): string | undefined;
-  /** Whether answering `ask` makes the agent show its own prompt. */
-  canAskNatively(agent: AgentId, env: NodeJS.ProcessEnv): boolean;
-  /** Turns belayd's answer into what this agent expects on stdout. */
-  respond(
-    answer: Answer,
-    reason: string,
-    detail: { approvedBy?: string; agent?: AgentId },
-  ): HookResult;
-}
 
 export interface HandleDeps {
   env: NodeJS.ProcessEnv;
@@ -54,6 +18,8 @@ export interface HandleDeps {
   timeoutSec?: number;
   /** Path to belayd's bin.js, used to start the approval page. */
   binPath?: string;
+  /** The `--event` the hook was installed with, for agents whose payload does not say. */
+  event?: string;
 }
 
 /** Older installs used a 30 second hook timeout and did not pass --timeout. */
@@ -68,9 +34,11 @@ export async function handleToolHook(
   deps: HandleDeps,
   dialect: Dialect,
 ): Promise<HookResult> {
-  let input: HookInput;
+  let payload: Record<string, unknown>;
   try {
-    input = JSON.parse(raw) as HookInput;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    payload = parsed as Record<string, unknown>;
   } catch {
     return dialect.respond(
       'deny',
@@ -78,21 +46,21 @@ export async function handleToolHook(
       {},
     );
   }
-  const event = input.hook_event_name ?? 'PreToolUse';
-  const agent = dialect.agent(input, deps.env);
+  const input = dialect.parse(payload, deps.event);
+  const agent = dialect.agent(payload, deps.env);
   const cwd = canonicalPath(input.cwd ?? process.cwd());
   const declared = dialect.workspace?.(deps.env);
   const workspace = declared ? canonicalPath(declared) : findWorkspace(cwd);
   const home = canonicalPath(homeDir(deps.env));
   const stateDir = belaydHome(deps.env);
   const started = Date.now();
-  const session = sessionKey(agent, input.session_id);
+  const session = sessionKey(agent, input.sessionId);
   const ctxBase: ActionContext = { agent, cwd, workspace, home };
 
-  if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+  if (input.phase === 'post' || input.phase === 'failed') {
     let snapshot: string | undefined;
     try {
-      const action = dialect.toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
+      const action = dialect.toAction(input.tool, input.input, cwd);
       const policy = await loadPolicy({ workspace, belaydHome: stateDir });
       // What the step wrote: what its command says, and what the snapshot saw change,
       // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
@@ -112,16 +80,16 @@ export async function handleToolHook(
       agent,
       workspace,
       cwd,
-      tool: input.tool_name,
-      toolUseId: input.tool_use_id,
-      outcome: event === 'PostToolUseFailure' ? 'failed' : 'ran',
+      tool: input.tool,
+      toolUseId: input.toolUseId,
+      outcome: input.phase === 'failed' ? 'failed' : 'ran',
       snapshot,
     });
     return { stdout: '', exitCode: 0 };
   }
-  if (event !== 'PreToolUse') return { stdout: '', exitCode: 0 };
+  if (input.phase !== 'pre') return { stdout: '', exitCode: 0 };
 
-  const action = dialect.toAction(input.tool_name ?? '', input.tool_input ?? {}, cwd);
+  const action = dialect.toAction(input.tool, input.input, cwd);
   const audit = (
     told: Answer,
     extra: {
@@ -139,11 +107,11 @@ export async function handleToolHook(
       agent,
       workspace,
       cwd,
-      tool: input.tool_name,
-      toolUseId: input.tool_use_id,
+      tool: input.tool,
+      toolUseId: input.toolUseId,
       kind: action.kind,
       label: actionLabel(action),
-      input: summarizeInput(input.tool_input ?? {}),
+      input: summarizeInput(input.input ?? {}),
       decision: told,
       durationMs: Date.now() - started,
       ...extra,
@@ -159,9 +127,9 @@ export async function handleToolHook(
   try {
     const ctx: ActionContext = {
       ...ctxBase,
-      ...(input.tool_name ? { toolName: input.tool_name } : {}),
-      ...(input.session_id ? { sessionId: input.session_id } : {}),
-      ...(input.tool_use_id ? { toolUseId: input.tool_use_id } : {}),
+      ...(input.tool ? { toolName: input.tool } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
     };
     const policy = await loadPolicy({ workspace, belaydHome: stateDir });
     failMode = policy.failMode;
@@ -257,21 +225,4 @@ function blocked(reason: string, rule: string): string {
     `belayd blocked this: ${reason}${rule} ` +
     'Do not try to get around this with a different command. If it is really needed, explain why and let the user decide.'
   );
-}
-
-/** The PreToolUse output shape shared by Claude Code, Codex and Cursor's compatibility layer. */
-export function preToolUseDecision(
-  permissionDecision: 'allow' | 'deny' | 'ask',
-  reason: string,
-): HookResult {
-  return {
-    stdout: JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision,
-        permissionDecisionReason: reason,
-      },
-    }),
-    exitCode: 0,
-  };
 }

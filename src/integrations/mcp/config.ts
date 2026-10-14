@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { readSettings, writeSettings } from '../claude-code/install.js';
+import { readSettings, writeSettings } from '../../agents/common.js';
 
 /**
  * Wraps the stdio servers in an `mcpServers` config (Claude Code .mcp.json, Cursor

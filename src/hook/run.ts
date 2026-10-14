@@ -1,34 +1,35 @@
-import { handleClaudeCode } from '../integrations/claude-code/hook.js';
+import { findAgent } from '../agents/registry.js';
+import { handleToolHook } from './handle.js';
 import type { HookResult } from './types.js';
 
 /**
- * Entry point for `belayd hook <agent>`. Reads the agent's JSON from stdin, writes the
- * decision to stdout. Any failure becomes a block, never a silent allow.
+ * Entry point for `belayd hook <agent> [--timeout s] [--event name]`. Reads the agent's
+ * JSON from stdin, writes the decision the way that agent reads it. Any failure
+ * becomes a block, never a silent allow.
  */
 export async function runHook(args: string[]): Promise<void> {
-  const agent = args[0] ?? '';
-  const t = args.indexOf('--timeout');
-  const timeoutSec = t >= 0 ? Number(args[t + 1]) || undefined : undefined;
+  const option = (name: string) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const timeoutSec = Number(option('--timeout')) || undefined;
+  const event = option('--event');
   let result: HookResult;
   try {
-    const input = await readStdin();
-    switch (agent) {
-      case 'claude-code':
-        result = await handleClaudeCode(input, {
+    const agent = findAgent(args[0] ?? '');
+    if (!agent?.dialect) {
+      result = blockUnknown(`unknown agent "${args[0] ?? ''}"`);
+    } else {
+      const [dialect, input] = await Promise.all([agent.dialect(), readStdin()]);
+      result = await handleToolHook(
+        input,
+        {
           env: process.env,
           ...(timeoutSec ? { timeoutSec } : {}),
-        });
-        break;
-      case 'codex': {
-        const { handleCodex } = await import('../integrations/codex/hook.js');
-        result = await handleCodex(input, {
-          env: process.env,
-          ...(timeoutSec ? { timeoutSec } : {}),
-        });
-        break;
-      }
-      default:
-        result = blockUnknown(`unknown agent "${agent}"`);
+          ...(event ? { event } : {}),
+        },
+        dialect,
+      );
     }
   } catch (err) {
     result = blockUnknown((err as Error)?.message ?? String(err));

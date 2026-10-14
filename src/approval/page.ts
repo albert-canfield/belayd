@@ -1,3 +1,5 @@
+import { agentNames } from '../agents/registry.js';
+
 /** The approval page. One self-contained document, no external requests. */
 export function renderPage(nonce: string): string {
   return `<!doctype html>
@@ -67,7 +69,7 @@ export function renderPage(nonce: string): string {
   <footer>Nothing leaves this machine. No answer before the timer runs out counts as a no.</footer>
 </div>
 <script nonce="${nonce}">
-  const AGENTS = { 'claude-code': 'Claude Code', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot CLI', gemini: 'Gemini CLI', mcp: 'MCP server', cli: 'belayd' };
+  const AGENTS = ${JSON.stringify(agentNames())};
   const $ = (id) => document.getElementById(id);
   let state = { pending: [], recent: [] };
   let fetchedAt = Date.now();

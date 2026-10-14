@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decide, listPending } from '../../src/approval/store.js';
-import { handleCodex, toCodexAction } from '../../src/integrations/codex/hook.js';
-import { parseApplyPatch } from '../../src/integrations/codex/patch.js';
+import { handleCodex, toCodexAction } from '../../src/agents/codex/hook.js';
+import { parseApplyPatch } from '../../src/agents/codex/patch.js';
 
 const PATCH = `*** Begin Patch
 *** Update File: src/app.ts

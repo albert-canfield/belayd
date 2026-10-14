@@ -1,16 +1,8 @@
 import readline from 'node:readline';
 import pc from 'picocolors';
+import { agentName } from '../agents/registry.js';
 import { decide, listPending, type ApprovalRequest } from '../approval/store.js';
 import { belaydHome } from '../util/paths.js';
-
-const AGENTS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  cursor: 'Cursor',
-  copilot: 'Copilot CLI',
-  gemini: 'Gemini CLI',
-  mcp: 'MCP server',
-};
 
 export interface ApproveOptions {
   allow?: boolean;
@@ -55,7 +47,7 @@ export async function approve(id: string | undefined, opts: ApproveOptions): Pro
     const pending = listPending(home);
     if (pending.length === 0) console.log('Nothing is waiting for approval.');
     for (const p of pending) {
-      console.log(`${pc.bold(p.id)}  ${AGENTS[p.agent] ?? p.agent}  ${left(p)} left`);
+      console.log(`${pc.bold(p.id)}  ${agentName(p.agent)}  ${left(p)} left`);
       console.log(`  ${p.label}`);
       console.log(pc.dim(`  ${p.reason}`));
     }
@@ -87,7 +79,7 @@ function console_(home: string): Promise<number> {
         );
       } else {
         lines.push(
-          `  ${pc.bold(AGENTS[p.agent] ?? p.agent)} ${pc.dim('·')} ${project(p.workspace)} ${pc.dim('·')} ${left(p)} left`,
+          `  ${pc.bold(agentName(p.agent))} ${pc.dim('·')} ${project(p.workspace)} ${pc.dim('·')} ${left(p)} left`,
           '',
           ...p.label.split('\n').map((l) => `  ${pc.cyan(l)}`),
           '',

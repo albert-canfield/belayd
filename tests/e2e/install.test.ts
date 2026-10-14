@@ -131,7 +131,7 @@ describe('belayd init and uninstall for Claude Code', () => {
     belayd(sb, ['init', '--yes'], { env: NEW });
     const r = belayd(sb, ['doctor'], { env: NEW });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/Hook blocks "rm -rf ~"/);
+    expect(r.stdout).toMatch(/Claude Code hook blocks "rm -rf ~"/);
   });
 
   it('refuses to treat the home folder as a project', () => {

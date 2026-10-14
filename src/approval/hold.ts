@@ -1,4 +1,5 @@
 import type { CompiledPolicy } from '../policy/load.js';
+import { agentName } from '../agents/registry.js';
 import { askDialog, type Dialog, type DialogAnswer } from './dialog.js';
 import { notify } from './notify.js';
 import {
@@ -116,18 +117,6 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
     process.off('SIGTERM', onSignal);
     process.off('SIGINT', onSignal);
   }
-}
-
-function agentName(agent: string): string {
-  return (
-    {
-      'claude-code': 'Claude Code',
-      codex: 'Codex',
-      cursor: 'Cursor',
-      copilot: 'Copilot CLI',
-      mcp: 'An MCP client',
-    }[agent] ?? agent
-  );
 }
 
 function truncate(s: string, n: number): string {

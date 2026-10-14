@@ -56,6 +56,7 @@ describe('belayd for Codex (built binary)', () => {
 
   it('is set up automatically when Codex is found, and uninstall removes both', () => {
     fs.mkdirSync(sb.env.CODEX_HOME!, { recursive: true });
+    fs.mkdirSync(sb.env.CLAUDE_CONFIG_DIR!, { recursive: true });
     const r = belayd(sb, ['init', '--yes'], { env: { BELAYD_CLAUDE_VERSION: '2.1.300' } });
     expect(r.stdout).toMatch(/Claude Code and Codex/);
     expect(belayd(sb, ['uninstall', '--yes']).status).toBe(0);

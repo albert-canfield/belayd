@@ -1,12 +1,9 @@
-import {
-  handleToolHook,
-  preToolUseDecision,
-  type Dialect,
-  type HandleDeps,
-} from '../../hook/handle.js';
+import { handleToolHook, type HandleDeps } from '../../hook/handle.js';
 import type { HookResult } from '../../hook/types.js';
 import type { Action } from '../../policy/types.js';
-import { asRecord } from '../claude-code/hook.js';
+import { claudeDialect, preToolUseDecision, readPreToolUseDecision } from '../claude-code/hook.js';
+import { asRecord } from '../common.js';
+import type { Dialect } from '../types.js';
 import { parseApplyPatch } from './patch.js';
 
 /**
@@ -20,6 +17,7 @@ import { parseApplyPatch } from './patch.js';
  *   returned as no decision plus a systemMessage; Codex then continues normally.
  */
 export const codexDialect: Dialect = {
+  parse: claudeDialect.parse,
   agent: () => 'codex',
   toAction: (tool, input) => toCodexAction(tool, input),
   canAskNatively: () => false,
@@ -30,6 +28,14 @@ export const codexDialect: Dialect = {
       return { stdout: JSON.stringify({ systemMessage: reason }), exitCode: 0 };
     return { stdout: '', exitCode: 0 };
   },
+  sample: (phase, command, cwd) => ({
+    hook_event_name: phase === 'pre' ? 'PreToolUse' : 'PostToolUse',
+    session_id: 'belayd-sample',
+    cwd,
+    tool_name: 'Bash',
+    tool_input: { command },
+  }),
+  verdictOf: readPreToolUseDecision,
 };
 
 export function handleCodex(raw: string, deps: HandleDeps): Promise<HookResult> {

@@ -1,23 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import pc from 'picocolors';
 import { listPending } from '../approval/store.js';
 import { tooBroad } from '../snapshots/capture.js';
 import { Shadow } from '../snapshots/shadow.js';
-import { codexDetected, codexHome } from '../integrations/codex/install.js';
 import { AuditLog } from '../audit/db.js';
 import { readUiState } from '../approval/ui-state.js';
-import {
-  claudeConfigDir,
-  HOOK_TIMEOUT_SECONDS,
-  detectClaudeVersion,
-  findInstalledHandler,
-  ON_FAILURE_MIN_VERSION,
-  readSettings,
-  supportsOnFailure,
-} from '../integrations/claude-code/install.js';
+import { HOOK_TIMEOUT_SECONDS } from '../agents/claude-code/setup.js';
+import { AGENTS, hookAgents, type AgentEntry } from '../agents/registry.js';
 import { loadPolicy } from '../policy/load.js';
 import { version } from '../version.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
@@ -70,85 +61,23 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     line('fail', 'Policy has a problem', (err as Error).message.split('\n').join('\n  '));
   }
 
-  const claudeVersion = detectClaudeVersion();
-  if (!claudeVersion) line('warn', 'Claude Code: `claude` command not found on PATH');
-  else if (supportsOnFailure(claudeVersion)) line('ok', `Claude Code ${claudeVersion}`);
-  else {
-    line(
-      'warn',
-      `Claude Code ${claudeVersion} is older than ${ON_FAILURE_MIN_VERSION}`,
-      'Hook timeouts are not blocked on this version. Update Claude Code, then run belayd init again.',
-    );
-  }
-
-  const files = [
-    path.join(workspace, '.claude', 'settings.local.json'),
-    path.join(workspace, '.claude', 'settings.json'),
-    path.join(claudeConfigDir(undefined, process.env), 'settings.json'),
-  ];
-  let installed = 0;
-  for (const file of files) {
-    if (!fs.existsSync(file)) continue;
-    let handler;
-    try {
-      handler = findInstalledHandler(readSettings(file));
-    } catch (err) {
-      line('fail', `Cannot read ${tilde(file)}`, (err as Error).message);
-      continue;
-    }
-    if (!handler) continue;
-    installed++;
-    const pinned = handler.args
-      ? [handler.command, handler.args[0]!]
-      : pathsInShellCommand(handler.command);
-    const missing = pinned.filter((p) => !fs.existsSync(p));
-    if (missing.length > 0) {
-      line(
-        'fail',
-        `Hook in ${tilde(file)} points to files that no longer exist`,
-        `${missing.join(', ')}. Every tool call is being blocked. Run belayd init again.`,
-      );
-    } else {
-      const guard = handler.onFailure === 'block' ? 'blocks on failure' : 'shell guard';
-      line('ok', `Claude Code hook installed in ${tilde(file)} (${guard})`);
-    }
-  }
-  if (installed === 0) line('warn', 'No belayd hook found for Claude Code', 'Run: belayd init');
-
-  if (codexDetected()) {
-    let codexInstalled = 0;
-    for (const file of [
-      path.join(workspace, '.codex', 'hooks.json'),
-      path.join(codexHome(), 'hooks.json'),
-    ]) {
-      if (!fs.existsSync(file)) continue;
-      let handler;
-      try {
-        handler = findInstalledHandler(readSettings(file));
-      } catch (err) {
-        line('fail', `Cannot read ${tilde(file)}`, (err as Error).message);
-        continue;
-      }
-      if (!handler) continue;
-      codexInstalled++;
-      const missing = pathsInShellCommand(handler.command).filter((p) => !fs.existsSync(p));
-      if (missing.length > 0) {
-        line(
-          'fail',
-          `Codex hook in ${tilde(file)} points to files that no longer exist`,
-          `${missing.join(', ')}. Run belayd init --agent codex again.`,
-        );
-      } else {
-        line(
-          'ok',
-          `Codex hook installed in ${tilde(file)}`,
-          'Codex skips new or changed hooks until you trust them: run /hooks in Codex once.',
-        );
-      }
-    }
-    if (codexInstalled === 0) {
-      line('warn', 'Codex found, but no belayd hook for it', 'Run: belayd init --agent codex');
-    }
+  // Every agent belayd can set up that is on this machine (Claude Code when none is).
+  const found = hookAgents().filter((a) => a.detect(process.env));
+  const checked = found.length > 0 ? found : hookAgents().slice(0, 1);
+  const options = {
+    workspace,
+    global: false,
+    env: process.env,
+    nodePath: process.execPath,
+    binPath: process.argv[1] ?? '',
+  };
+  for (const agent of checked)
+    for (const l of (await agent.setup!()).doctor(options)) line(l.status, l.text, l.hint);
+  for (const agent of AGENTS) {
+    if (agent.support === 'hooks' || !agent.detect(process.env)) continue;
+    if (agent.support === 'host')
+      line('ok', `${agent.name} found: it runs the ${hostName(agent)} hooks`);
+    else line('warn', `${agent.name} found: belayd does not cover it yet`);
   }
 
   if (AuditLog.exists(state)) {
@@ -205,34 +134,37 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     );
   }
 
-  const smoke = smokeTest(workspace);
-  if (smoke.ok) line('ok', `Hook blocks "rm -rf ~" in ${smoke.ms} ms`);
-  else line('fail', 'Hook smoke test failed', smoke.detail);
+  // Each agent's own hook, fed the way that agent calls it, must block `rm -rf ~`.
+  for (const agent of checked) {
+    const smoke = await smokeTest(agent, workspace);
+    if (smoke.ok) line('ok', `${agent.name} hook blocks "rm -rf ~" in ${smoke.ms} ms`);
+    else line('fail', `${agent.name} hook smoke test failed`, smoke.detail);
+  }
 
   return failed ? 1 : 0;
 }
 
-function smokeTest(workspace: string): { ok: boolean; ms: number; detail?: string } {
-  const bin = process.argv[1] ?? '';
-  const payload = JSON.stringify({
-    hook_event_name: 'PreToolUse',
-    tool_name: 'Bash',
-    tool_input: { command: 'rm -rf ~' },
-    cwd: workspace,
-    session_id: 'belayd-doctor',
-  });
+async function smokeTest(
+  agent: AgentEntry,
+  workspace: string,
+): Promise<{ ok: boolean; ms: number; detail?: string }> {
+  const dialect = await agent.dialect!();
   const start = performance.now();
-  const r = spawnSync(process.execPath, [bin, 'hook', 'claude-code'], {
-    input: payload,
-    encoding: 'utf8',
-  });
+  const r = spawnSync(
+    process.execPath,
+    [process.argv[1] ?? '', 'hook', agent.id, '--event', 'pre'],
+    {
+      input: JSON.stringify(dialect.sample('pre', 'rm -rf ~', workspace)),
+      encoding: 'utf8',
+    },
+  );
   const ms = Math.round(performance.now() - start);
-  try {
-    const out = JSON.parse(r.stdout) as { hookSpecificOutput?: { permissionDecision?: string } };
-    if (out.hookSpecificOutput?.permissionDecision === 'deny') return { ok: true, ms };
-  } catch {
-    // fall through
-  }
+  const verdict = dialect.verdictOf({
+    stdout: r.stdout,
+    stderr: r.stderr,
+    exitCode: r.status ?? 1,
+  });
+  if (verdict === 'deny') return { ok: true, ms };
   return {
     ok: false,
     ms,
@@ -240,14 +172,8 @@ function smokeTest(workspace: string): { ok: boolean; ms: number; detail?: strin
   };
 }
 
-function pathsInShellCommand(command: string): string[] {
-  const quoted = [...command.matchAll(/'([^']+)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? '');
-  return quoted.slice(0, 2).filter((p) => p.startsWith('/'));
-}
-
-function tilde(p: string): string {
-  const home = os.homedir();
-  return p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
+function hostName(agent: AgentEntry): string {
+  return AGENTS.find((a) => a.id === agent.runsHooksOf)?.name ?? String(agent.runsHooksOf);
 }
 
 function recentErrors(home: string): string[] {

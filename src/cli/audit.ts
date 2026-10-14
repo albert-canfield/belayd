@@ -1,18 +1,10 @@
 import path from 'node:path';
 import pc from 'picocolors';
+import { agentName } from '../agents/registry.js';
 import { AuditLog, type StoredEvent } from '../audit/db.js';
 import { Shadow, type Change } from '../snapshots/shadow.js';
 import { stepChanges } from '../snapshots/undo.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
-
-const AGENTS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  cursor: 'Cursor',
-  copilot: 'Copilot CLI',
-  gemini: 'Gemini CLI',
-  mcp: 'MCP',
-};
 
 interface Common {
   all?: boolean;
@@ -104,7 +96,7 @@ export async function sessions(opts: Common & { limit?: string }): Promise<numbe
         .filter(Boolean)
         .join(' ');
       console.log(
-        `${pc.bold(shortSession(s.session))}  ${AGENTS[s.agent] ?? s.agent}  ${path.basename(s.workspace)}  ` +
+        `${pc.bold(shortSession(s.session))}  ${agentName(s.agent)}  ${path.basename(s.workspace)}  ` +
           `${pc.dim(when(s.started))}  ${s.steps} step${s.steps === 1 ? '' : 's'} ${flags}`,
       );
     }
@@ -183,7 +175,7 @@ export function printReplay(events: StoredEvent[], changes = new Map<number, Cha
 
   const minutes = Math.max(1, Math.round((last.at - first.at) / 60_000));
   console.log(
-    `${pc.bold(`Session ${shortSession(first.session)}`)}  ${AGENTS[first.agent] ?? first.agent} · ${path.basename(first.workspace)} · ` +
+    `${pc.bold(`Session ${shortSession(first.session)}`)}  ${agentName(first.agent)} · ${path.basename(first.workspace)} · ` +
       `${when(first.at)} · ${minutes} min · ${pre.length} step${pre.length === 1 ? '' : 's'}`,
   );
   const blocked = pre.filter((e) => e.decision === 'deny').length;

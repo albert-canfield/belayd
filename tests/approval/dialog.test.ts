@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setDialogForTests, type DialogAnswer } from '../../src/approval/dialog.js';
 import { decide, listPending } from '../../src/approval/store.js';
-import { handleClaudeCode } from '../../src/integrations/claude-code/hook.js';
+import { handleClaudeCode } from '../../src/agents/claude-code/hook.js';
 import { trustFile } from '../../src/policy/trust.js';
 
 let ws: string;

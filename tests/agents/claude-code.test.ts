@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decide, listPending } from '../../src/approval/store.js';
 import { trustFile } from '../../src/policy/trust.js';
-import { detectHost, handleClaudeCode, toAction } from '../../src/integrations/claude-code/hook.js';
+import { detectHost, handleClaudeCode, toAction } from '../../src/agents/claude-code/hook.js';
 
 let workspace: string;
 let env: NodeJS.ProcessEnv;
