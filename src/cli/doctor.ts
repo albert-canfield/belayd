@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import pc from 'picocolors';
 import { listPending } from '../approval/store.js';
+import { tooBroad } from '../snapshots/capture.js';
+import { Shadow } from '../snapshots/shadow.js';
 import { codexDetected, codexHome } from '../integrations/codex/install.js';
 import { AuditLog } from '../audit/db.js';
 import { readUiState } from '../approval/ui-state.js';
@@ -18,7 +20,7 @@ import {
 } from '../integrations/claude-code/install.js';
 import { loadPolicy } from '../policy/load.js';
 import { version } from '../version.js';
-import { belaydHome, findWorkspace } from '../util/paths.js';
+import { belaydHome, findWorkspace, homeDir } from '../util/paths.js';
 
 type Status = 'ok' | 'warn' | 'fail';
 
@@ -146,6 +148,26 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
   const errors = recentErrors(state);
   if (errors.length > 0)
     line('warn', `Recent belayd errors (${path.join(state, 'errors.log')})`, errors.join('\n  '));
+
+  if (!Shadow.available()) {
+    line('warn', 'Git is not installed, so snapshots and undo are off');
+  } else if (tooBroad(workspace, homeDir())) {
+    line('ok', 'Snapshots: off here (this is your home folder, not a project)');
+  } else {
+    const shadow = new Shadow(state, workspace);
+    if (shadow.exists() && shadow.tooBig()) {
+      line(
+        'warn',
+        'Snapshots: off for this project, it has too many files',
+        'Undo is not available here.',
+      );
+    } else {
+      line(
+        'ok',
+        `Snapshots: ${shadow.exists() ? 'on, undo is available' : 'on, none taken in this project yet'}`,
+      );
+    }
+  }
 
   const pending = listPending(state);
   const page = readUiState(state);
