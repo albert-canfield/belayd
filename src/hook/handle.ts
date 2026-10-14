@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { record, sessionKey, summarizeInput } from '../audit/record.js';
 import { addSessionWrites, sessionWrites } from '../audit/session.js';
 import { buildSubjects } from '../policy/subjects.js';
@@ -8,6 +9,7 @@ import type { Action, ActionContext, AgentId } from '../policy/types.js';
 import { capture } from '../snapshots/capture.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 import type { HookResult } from './types.js';
+import { startWatchdog } from './watchdog.js';
 
 /** The fields belayd reads from a hook payload. Claude Code, Codex and Cursor all send these. */
 export interface HookInput {
@@ -50,6 +52,8 @@ export interface HandleDeps {
 const DEFAULT_TIMEOUT_SEC = 30;
 /** Answer this long before the agent would give up on the hook. */
 const SAFETY_MARGIN_MS = 5000;
+/** Checking a call takes milliseconds. Past this, something is stuck and the call is blocked. */
+const CHECK_DEADLINE_MS = 20_000;
 
 export async function handleToolHook(
   raw: string,
@@ -135,6 +139,12 @@ export async function handleToolHook(
       ...extra,
     });
 
+  const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
+  const watchdog = startWatchdog(
+    Math.min(CHECK_DEADLINE_MS, timeoutMs / 2),
+    'belayd took too long to check this call, so it is blocked. Ask the user to run `belayd doctor`.',
+    path.join(stateDir, 'errors.log'),
+  );
   let failMode: 'open' | 'closed' = 'closed';
   try {
     const ctx: ActionContext = {
@@ -147,6 +157,7 @@ export async function handleToolHook(
     failMode = policy.failMode;
     // Fault injection for the test suite, which proves that failures block.
     if (deps.env.BELAYD_FAULT === 'after-policy') throw new Error('injected fault');
+    if (deps.env.BELAYD_FAULT === 'hang') for (;;);
     const decision = evaluate(action, ctx, policy, {
       belaydHome: stateDir,
       sessionWrites: sessionWrites(stateDir, session),
@@ -168,7 +179,8 @@ export async function handleToolHook(
       return dialect.respond(decision.verdict, `belayd: ${decision.reason}${rule}`, {});
     }
 
-    const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
+    // Waiting for a person is expected to take a while; it has its own deadline.
+    watchdog.extend(timeoutMs - SAFETY_MARGIN_MS / 2);
     // Loaded only when a person may need to answer; most tool calls never get here.
     const { resolveAsk } = await import('../approval/resolve.js');
     const resolution = await resolveAsk({
@@ -213,6 +225,8 @@ export async function handleToolHook(
         'Ask the user to run `belayd doctor`.',
       {},
     );
+  } finally {
+    watchdog.stop();
   }
 }
 

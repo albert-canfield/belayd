@@ -1,7 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { belayd, hookPayload, sandbox, type Sandbox } from './helpers.js';
+import { belayd, bin, hookPayload, sandbox, type Sandbox } from './helpers.js';
 
 let sb: Sandbox;
 beforeEach(() => (sb = sandbox()));
@@ -92,6 +93,31 @@ describe('failMode', () => {
     const r = hook(payload(), { BELAYD_FAULT: 'after-policy' });
     expect(decision(r.stdout)).toBe('deny');
     expect(r.stdout).toMatch(/injected fault/);
+  });
+
+  it('blocks a check that hangs, well before the agent gives up on the hook', () => {
+    const started = Date.now();
+    const r = belayd(sb, ['hook', 'claude-code', '--timeout', '4'], {
+      input: payload(),
+      env: { BELAYD_FAULT: 'hang' },
+    });
+    expect(Date.now() - started).toBeLessThan(3500);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/took too long/);
+    // The installed shell guard turns any failure into exit 2, which blocks.
+    const guarded = spawnSync(
+      '/bin/sh',
+      ['-c', `"${process.execPath}" "${bin}" hook claude-code --timeout 4 || exit 2`],
+      {
+        input: payload(),
+        env: { ...sb.env, BELAYD_FAULT: 'hang' },
+        encoding: 'utf8',
+      },
+    );
+    expect(guarded.status).toBe(2);
+    expect(fs.readFileSync(path.join(sb.env.BELAYD_HOME!, 'errors.log'), 'utf8')).toMatch(
+      /watchdog/,
+    );
   });
 
   it('lets the agent continue when the policy says failMode: open, and logs it', () => {
