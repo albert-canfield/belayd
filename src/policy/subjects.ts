@@ -111,6 +111,46 @@ const WRITES_AFTER_FIRST = new Set(['chmod', 'chown', 'chgrp']);
 /** Programs that change only their last path argument (the destination). */
 const WRITES_LAST = new Set(['cp', 'install', 'ln', 'rsync', 'scp']);
 
+const MUTATING_MCP_TOOL =
+  /write|edit|create|delete|remove|move|rename|update|patch|apply|upload|mkdir|save|put/i;
+const SHELL_MCP_TOOL = /exec|run|shell|command|terminal|bash/i;
+const PATH_KEYS =
+  /^(path|paths|file|files|file_?path|filename|dir|directory|target|source|destination|dest|src|old_?path|new_?path|cwd)$/i;
+
+/** Path-like values in MCP tool arguments: known keys, plus absolute or home-relative strings. */
+function mcpPaths(args: unknown, depth = 0): string[] {
+  if (depth > 4 || !args || typeof args !== 'object') return [];
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    const values = Array.isArray(value) ? value : [value];
+    for (const v of values) {
+      if (typeof v === 'string') {
+        if (
+          v.length > 0 &&
+          v.length < 4096 &&
+          !v.includes('\n') &&
+          (PATH_KEYS.test(key) || /^(\/|~\/)/.test(v))
+        ) {
+          if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) out.push(v);
+        }
+      } else if (v && typeof v === 'object') out.push(...mcpPaths(v, depth + 1));
+    }
+  }
+  return out;
+}
+
+function mcpCommand(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const a = args as Record<string, unknown>;
+  for (const key of ['command', 'cmd', 'script', 'shell_command']) {
+    if (typeof a[key] === 'string') return a[key] as string;
+    if (Array.isArray(a[key]) && (a[key] as unknown[]).every((x) => typeof x === 'string')) {
+      return (a[key] as string[]).join(' ');
+    }
+  }
+  return undefined;
+}
+
 const SPECIAL_FILES = /^\/dev\/(null|zero|stdout|stderr|stdin|tty|fd\/\d+|random|urandom)$/;
 const GLOB_CHARS = /[*?[]/;
 
@@ -157,13 +197,20 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
       ];
     case 'mcp': {
       const json = safeJson(action.args);
-      return [
-        {
-          ...empty('mcp', ctx, `${action.server}: ${action.tool}`),
-          domains: domainsIn(json),
-          outbound: [json],
-        },
-      ];
+      const files = mcpPaths(action.args).flatMap((p) => absolute(p, ctx));
+      const writes = MUTATING_MCP_TOOL.test(action.tool);
+      const main: Subject = {
+        ...empty('mcp', ctx, `${action.server}: ${action.tool}`),
+        domains: domainsIn(json),
+        outbound: [json],
+        paths: files,
+        reads: writes ? [] : files,
+        writes: writes ? files : [],
+      };
+      // Shell-style MCP tools (execute_command, run_terminal_cmd, ...) get the full shell analysis.
+      const command = SHELL_MCP_TOOL.test(action.tool) ? mcpCommand(action.args) : undefined;
+      const shell = command ? buildSubjects({ kind: 'shell', command }, ctx) : [];
+      return [main, ...shell];
     }
     case 'tool':
       return [empty('tool', ctx, action.name)];

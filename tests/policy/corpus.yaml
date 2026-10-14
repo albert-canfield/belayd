@@ -270,3 +270,36 @@
 - { cmd: 'find . -name __pycache__ -exec rm -rf {} +', balanced: pass }
 - { cmd: 'mkdir -p src/components && touch src/components/Button.tsx', balanced: pass }
 - { cmd: 'cd src && ls', balanced: pass, strict: allow }
+
+# --- MCP tools get the same rules ---------------------------------------------
+- {
+    mcp: { server: filesystem, tool: read_file, args: { path: /work/app/.env } },
+    balanced: deny,
+    yolo: ask,
+  }
+- {
+    mcp: { server: filesystem, tool: read_file, args: { path: /work/app/src/a.ts } },
+    balanced: pass,
+  }
+- {
+    mcp: { server: filesystem, tool: write_file, args: { path: /home/dev/.bashrc, content: x } },
+    balanced: ask,
+    strict: deny,
+  }
+- {
+    mcp: { server: filesystem, tool: write_file, args: { path: /work/app/src/a.ts, content: x } },
+    balanced: pass,
+  }
+- { mcp: { server: desktop, tool: execute_command, args: { command: 'rm -rf ~' } }, balanced: deny }
+- { mcp: { server: desktop, tool: execute_command, args: { command: 'npm test' } }, balanced: pass }
+- {
+    mcp:
+      {
+        server: github,
+        tool: create_issue,
+        args: { title: 'Bug', body: 'token ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+      },
+    balanced: ask,
+    strict: deny,
+  }
+- { mcp: { server: github, tool: search_code, args: { q: 'useEffect' } }, balanced: pass }

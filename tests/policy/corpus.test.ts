@@ -10,6 +10,7 @@ interface Row {
   read?: string;
   write?: string;
   fetch?: string;
+  mcp?: { server: string; tool: string; args: unknown };
   balanced: Verdict;
   strict?: Verdict;
   yolo?: Verdict;
@@ -40,6 +41,7 @@ function actionOf(row: Row): Action {
   if (row.read !== undefined) return { kind: 'read', path: row.read };
   if (row.write !== undefined) return { kind: 'write', path: row.write };
   if (row.fetch !== undefined) return { kind: 'fetch', url: row.fetch };
+  if (row.mcp !== undefined) return { kind: 'mcp', ...row.mcp };
   throw new Error(`row without an action: ${JSON.stringify(row)}`);
 }
 
@@ -54,7 +56,11 @@ function expected(row: Row, preset: PresetKey): Verdict {
 function label(row: Row): string {
   const a = actionOf(row);
   const text =
-    a.kind === 'shell' ? a.command : `${a.kind} ${'path' in a ? a.path : 'url' in a ? a.url : ''}`;
+    a.kind === 'shell'
+      ? a.command
+      : a.kind === 'mcp'
+        ? `mcp ${a.server}.${a.tool} ${JSON.stringify(a.args)}`
+        : `${a.kind} ${'path' in a ? a.path : 'url' in a ? a.url : ''}`;
   return text.replace(/\n/g, '\\n');
 }
 
