@@ -17,6 +17,7 @@ import {
 } from '../integrations/claude-code/install.js';
 import { codexDetected, codexHooks, codexTarget } from '../integrations/codex/install.js';
 import { listPresets, POLICY_FILE } from '../policy/load.js';
+import { isTrusted, trustFile } from '../policy/trust.js';
 import { tooBroad } from '../snapshots/capture.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
@@ -132,6 +133,14 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   if (writePolicy) {
     fs.mkdirSync(path.dirname(policyFile), { recursive: true });
     fs.writeFileSync(policyFile, policyTemplate(preset));
+    // You just created it, so it is yours to trust.
+    if (!opts.global) trustFile(belaydHome(), policyFile);
+  } else if (!opts.global && !isTrusted(belaydHome(), policyFile)) {
+    console.log(
+      pc.yellow(
+        `  This project already has a belayd.yaml you have not reviewed. Until you run belayd trust, only its stricter rules apply.`,
+      ),
+    );
   }
 
   console.log('');

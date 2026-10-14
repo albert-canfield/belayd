@@ -13,6 +13,7 @@ The first release. belayd sits between AI coding agents and your machine: one po
 - belayd remembers which files the agent changed in a session and asks before running scripts or hooks from them (`npm test` after editing `package.json`, `make` after editing the `Makefile`, `git commit` after adding a hook).
 - MCP tool calls get the same file and shell rules.
 - `belayd check` shows a decision without running anything.
+- A project `belayd.yaml` only counts in full after `belayd trust`. Until then it can make belayd stricter, never weaker.
 
 ### Agents
 

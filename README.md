@@ -140,6 +140,8 @@ rules:
 
 Rules can match on the program and subcommand (`git push`), arguments, file paths (read, written or either), network domains, code piped from the internet, and secrets in outgoing data. The presets are plain YAML in [`presets/`](presets): they double as examples. A few rules are marked `final`: your own rules can't weaken them, and switching one off takes an explicit `disable:` line that shows up in the audit log. More examples live in [`examples/`](examples).
 
+A `belayd.yaml` that arrives with a cloned repository is not trusted until you look at it. Until you run `belayd trust`, it can make belayd stricter but never weaker: its deny and ask rules apply, its allow rules and switches don't. The file `belayd init` writes for you is trusted from the start, and editing a trusted file untrusts it until you run `belayd trust` again.
+
 ## Supported agents
 
 | Agent | Blocks | Asks you | Audit | Undo | How |
@@ -216,6 +218,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | `belayd replay [session]` | A session as a timeline, with the files each step changed |
 | `belayd undo [steps]`, `belayd redo` | Put files back, and take that back |
 | `belayd mcp` | Run an MCP server behind belayd, or wrap a config file |
+| `belayd trust` | Let a project's `belayd.yaml` apply in full, after you've reviewed it |
 | `belayd doctor` | Check that everything is installed and working |
 | `belayd uninstall` | Remove every hook belayd installed (your log and snapshots stay) |
 

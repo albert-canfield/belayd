@@ -77,6 +77,7 @@ rules:
         - belayd ui
         - belayd uninstall
         - belayd init
+        - belayd trust
         - belayd mcp wrap
         - belayd mcp unwrap
     decision: deny
@@ -85,7 +86,12 @@ rules:
   - id: no-approval-tampering
     final: true
     match:
-      path: ['{belayd_home}/ui-token', '{belayd_home}/approvals/**', '{belayd_home}/ui.json']
+      path:
+        - '{belayd_home}/ui-token'
+        - '{belayd_home}/approvals/**'
+        - '{belayd_home}/ui.json'
+        - '{belayd_home}/trusted.json'
+        - '{belayd_home}/cache/**'
     decision: deny
     reason: These files belong to belayd's approval system. Ask the user to approve the request themselves.
 

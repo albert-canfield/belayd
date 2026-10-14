@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { version } from '../version.js';
+import { isTrusted, trustKey } from './trust.js';
 import type { Rule } from './schema.js';
 
 export const POLICY_FILE = 'belayd.yaml';
@@ -32,6 +33,10 @@ export interface CompiledPolicy {
   };
   failMode: 'closed' | 'open';
   snapshots: { enabled: boolean; maxFileSize: number };
+  /** False when a project belayd.yaml has not been reviewed with `belayd trust`. */
+  trusted: boolean;
+  /** Things the user should know, such as ignored parts of an untrusted file. */
+  warnings: string[];
 }
 
 export class PolicyError extends Error {
@@ -72,7 +77,22 @@ export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
     ? undefined
     : (opts.policyPath ?? findPolicyFile(opts.workspace, opts.belaydHome));
 
-  const key = opts.noCache ? undefined : cacheKey(file, opts.preset);
+  // Your own file and a file you name explicitly are trusted. A belayd.yaml inside the
+  // project is trusted only after `belayd trust`, pinned to its exact content.
+  const globalFile = path.join(opts.belaydHome, POLICY_FILE);
+  const isProjectFile =
+    !opts.policyPath && file !== undefined && path.resolve(file) !== path.resolve(globalFile);
+  const trusted = !isProjectFile || isTrusted(opts.belaydHome, file!);
+  const baseFile = !trusted && fs.existsSync(globalFile) ? globalFile : undefined;
+
+  const key = opts.noCache
+    ? undefined
+    : cacheKey(
+        file,
+        opts.preset,
+        `${trusted}\0${baseFile ?? ''}\0${file ? trustKey(opts.belaydHome, file) : ''}`,
+        baseFile,
+      );
   const cacheFile = key ? path.join(opts.belaydHome, 'cache', `policy-${key}.json`) : undefined;
   if (cacheFile) {
     try {
@@ -83,16 +103,22 @@ export async function loadPolicy(opts: LoadOptions): Promise<CompiledPolicy> {
   }
 
   const { compileFromFile } = await import('./compile.js');
-  const policy = compileFromFile(file, opts.preset);
+  const policy = compileFromFile(file, opts.preset, { trusted, ...(baseFile ? { baseFile } : {}) });
   if (cacheFile) writeCache(cacheFile, policy);
   return policy;
 }
 
-function cacheKey(file: string | undefined, preset: string | undefined): string | undefined {
+function cacheKey(
+  file: string | undefined,
+  preset: string | undefined,
+  trust: string,
+  baseFile: string | undefined,
+): string | undefined {
   try {
     const hash = crypto.createHash('sha256');
-    hash.update(`${version}\0${preset ?? ''}\0${file ?? ''}\0`);
+    hash.update(`${version}\0${preset ?? ''}\0${file ?? ''}\0${trust}\0`);
     if (file) hash.update(fs.readFileSync(file));
+    if (baseFile) hash.update(fs.readFileSync(baseFile));
     const dir = presetsDir();
     for (const name of fs.readdirSync(dir).sort()) {
       if (name.endsWith('.yaml')) hash.update(name).update(fs.readFileSync(path.join(dir, name)));

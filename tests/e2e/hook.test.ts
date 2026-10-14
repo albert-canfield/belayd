@@ -96,6 +96,7 @@ describe('failMode', () => {
 
   it('lets the agent continue when the policy says failMode: open, and logs it', () => {
     fs.writeFileSync(path.join(sb.project, 'belayd.yaml'), 'version: 1\nfailMode: open\n');
+    belayd(sb, ['trust']);
     const r = hook(payload(), { BELAYD_FAULT: 'after-policy' });
     expect(r.stdout).toBe('');
     const log = JSON.parse(belayd(sb, ['log', '--json']).stdout) as {

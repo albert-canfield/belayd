@@ -16,13 +16,99 @@ import { formatIssues, PolicySchema, type PolicyFile, type Rule } from './schema
  * reaches this when the policy changed since the last call (see load.ts).
  */
 
+export interface CompileOptions {
+  /** False for a project file you have not reviewed with `belayd trust`. */
+  trusted?: boolean;
+  /** Your own policy ($BELAYD_HOME/belayd.yaml), which an untrusted project file builds on. */
+  baseFile?: string;
+}
+
+const STRICTNESS: Record<string, number> = { 'yolo-with-undo': 0, balanced: 1, strict: 2 };
+const DEFAULT_ORDER: Record<string, number> = { allow: 0, pass: 1, ask: 2 };
+
 export function compileFromFile(
   file: string | undefined,
   preset: string | undefined,
+  opts: CompileOptions = {},
 ): CompiledPolicy {
   if (!file) return compile(undefined, undefined, preset ?? DEFAULT_PRESET);
   const user = readPolicyFile(file);
-  return compile(user, file, user.extends ?? DEFAULT_PRESET);
+  if (opts.trusted !== false) return compile(user, file, user.extends ?? DEFAULT_PRESET);
+  return compileUntrusted(user, file, opts.baseFile);
+}
+
+/**
+ * An untrusted project file can only make belayd stricter. Its deny and ask rules are
+ * added on top of your own policy; allow rules, disable, weaker presets and defaults,
+ * failMode: open, onTimeout: allow and snapshot settings are ignored, and said so.
+ */
+function compileUntrusted(
+  user: PolicyFile,
+  file: string,
+  baseFile: string | undefined,
+): CompiledPolicy {
+  const base = baseFile ? readPolicyFile(baseFile) : undefined;
+  const ignored: string[] = [];
+  const baseExtends = base?.extends ?? DEFAULT_PRESET;
+  let extendsName = baseExtends;
+  if (user.extends && user.extends !== baseExtends) {
+    if ((STRICTNESS[user.extends] ?? -1) > (STRICTNESS[baseExtends] ?? 99))
+      extendsName = user.extends;
+    else ignored.push(`extends: ${user.extends}`);
+  }
+  const presetDefault = loadPresetChain(extendsName).reduce<string>(
+    (d, p) => p.default ?? d,
+    'pass',
+  );
+  const effective = base?.default ?? presetDefault;
+  let defaultVerdict = base?.default;
+  if (user.default) {
+    if ((DEFAULT_ORDER[user.default] ?? 0) > (DEFAULT_ORDER[effective] ?? 0))
+      defaultVerdict = user.default;
+    else if (user.default !== effective) ignored.push(`default: ${user.default}`);
+  }
+  const allows = user.rules.filter((r) => r.decision === 'allow');
+  if (allows.length > 0)
+    ignored.push(`${allows.length} allow rule${allows.length === 1 ? '' : 's'}`);
+  if (user.disable.length > 0) ignored.push(`disable: [${user.disable.join(', ')}]`);
+  if (user.failMode === 'open') ignored.push('failMode: open');
+  if (user.approval?.onTimeout === 'allow') ignored.push('approval.onTimeout: allow');
+  if (user.snapshots) ignored.push('snapshots settings');
+
+  // onTimeout comes only from your own policy: an untrusted file cannot make silence a yes.
+  const approval = { ...user.approval };
+  delete approval.onTimeout;
+  const restricted: PolicyFile = {
+    version: 1,
+    extends: extendsName,
+    rules: [
+      ...(base?.rules ?? []),
+      ...user.rules
+        .filter((r) => r.decision !== 'allow')
+        .map((r) => ({ ...r, id: `project-${r.id}` })),
+    ],
+    disable: base?.disable ?? [],
+    ...(defaultVerdict ? { default: defaultVerdict } : {}),
+    approval: {
+      ...base?.approval,
+      ...approval,
+      ...(base?.approval?.onTimeout ? { onTimeout: base.approval.onTimeout } : {}),
+    },
+    ...(base?.failMode ? { failMode: base.failMode } : {}),
+    ...(base?.snapshots ? { snapshots: base.snapshots } : {}),
+  };
+  const compiled = compile(restricted, baseFile ?? file, extendsName);
+  return {
+    ...compiled,
+    name: `${compiled.preset} preset${baseFile ? ` + ${baseFile}` : ''} + ${file} (not trusted)`,
+    files: [file, ...(baseFile ? [baseFile] : [])],
+    trusted: false,
+    warnings: [
+      `${file} is not trusted yet, so only its stricter rules apply.` +
+        (ignored.length > 0 ? ` Ignored: ${ignored.join('; ')}.` : '') +
+        ' Review it, then run: belayd trust',
+    ],
+  };
 }
 
 export function readPolicyFile(file: string): PolicyFile {
@@ -111,6 +197,8 @@ export function compile(
       port: approval?.port ?? DEFAULT_PORT,
     },
     failMode: failMode ?? 'closed',
+    trusted: true,
+    warnings: [],
     snapshots: {
       enabled: snapshots?.enabled ?? true,
       maxFileSize: toBytes(snapshots?.maxFileSize ?? '20MB'),
@@ -120,6 +208,9 @@ export function compile(
 
 /** A preset and the presets it extends, base first. */
 function loadPresetChain(name: string, seen: string[] = []): PolicyFile[] {
+  if (!/^[a-z0-9-]+$/.test(name)) {
+    throw new PolicyError(`unknown preset "${name}". Available: ${listPresets().join(', ')}`);
+  }
   if (seen.includes(name))
     throw new PolicyError(`presets extend each other in a loop: ${[...seen, name].join(' -> ')}`);
   const file = path.join(presetsDir(), `${name}.yaml`);

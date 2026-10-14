@@ -44,6 +44,7 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     policyTimeoutMs = policy.approval.timeoutMs;
     const count = policy.rules.final.length + policy.rules.user.length + policy.rules.preset.length;
     line('ok', `Policy: ${policy.name} (${count} rules)`);
+    for (const w of policy.warnings) line('warn', w);
   } catch (err) {
     line('fail', 'Policy has a problem', (err as Error).message.split('\n').join('\n  '));
   }

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decide, listPending } from '../../src/approval/store.js';
+import { trustFile } from '../../src/policy/trust.js';
 import { handleClaudeCode, toAction } from '../../src/integrations/claude-code/hook.js';
 
 let workspace: string;
@@ -103,6 +104,7 @@ describe('Claude Code hook output', () => {
       path.join(workspace, 'belayd.yaml'),
       'version: 1\nrules:\n  - id: ok-tests\n    match: { command: npm test }\n    decision: allow\n',
     );
+    trustFile(env.BELAYD_HOME!, path.join(workspace, 'belayd.yaml'));
     const r = await call({ tool_name: 'Bash', tool_input: { command: 'npm test' } });
     expect(decisionOf(r.stdout)).toBe('allow');
   });

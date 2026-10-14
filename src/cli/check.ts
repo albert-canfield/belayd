@@ -39,6 +39,7 @@ export async function check(commandWords: string[], opts: CheckOptions): Promise
     return 0;
   }
   print(action, decision, policy.name, opts.explain ?? false);
+  for (const w of policy.warnings) console.log(pc.yellow(`   ${w}`));
   return 0;
 }
 

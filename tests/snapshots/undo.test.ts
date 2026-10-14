@@ -192,6 +192,7 @@ describe('undo', () => {
 
   it('skips files over the size limit and says so', () => {
     write('belayd.yaml', 'version: 1\nsnapshots: { maxFileSize: 1KB }\n');
+    belayd(sb, ['trust']);
     shellStep('head -c 5000 /dev/zero > big.dat && echo small > small.txt');
     const r = belayd(sb, ['undo']);
     expect(r.status).toBe(0);

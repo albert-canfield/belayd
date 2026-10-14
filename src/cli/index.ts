@@ -131,6 +131,16 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('trust')
+    .description('Let a project belayd.yaml apply in full, after you have reviewed it')
+    .argument('[file]', 'policy file (default: belayd.yaml in this project)')
+    .option('--revoke', 'stop trusting it')
+    .action(async (file: string | undefined, opts) => {
+      const { trust } = await import('./trust.js');
+      process.exitCode = await trust(file, opts);
+    });
+
+  program
     .command('approve')
     .description('Answer agents waiting for your approval (live console)')
     .argument('[id]', 'answer one request directly, with --allow or --deny')

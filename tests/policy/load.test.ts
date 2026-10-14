@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { evaluate } from '../../src/policy/engine.js';
 import { loadPolicy, PolicyError } from '../../src/policy/load.js';
+import { trustFile } from '../../src/policy/trust.js';
 import type { ActionContext } from '../../src/policy/types.js';
 
 let dir: string;
@@ -16,7 +17,11 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-const write = (text: string) => fs.writeFileSync(path.join(dir, 'belayd.yaml'), text);
+// These tests are about what a policy can do, so the file is trusted (see trust.test.ts).
+const write = (text: string) => {
+  fs.writeFileSync(path.join(dir, 'belayd.yaml'), text);
+  trustFile(home, path.join(dir, 'belayd.yaml'));
+};
 const load = () => loadPolicy({ workspace: dir, belaydHome: home });
 const ctx = (): ActionContext => ({ agent: 'cli', cwd: dir, workspace: dir, home: '/home/dev' });
 const verdict = async (command: string) =>
