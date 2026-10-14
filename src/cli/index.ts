@@ -154,6 +154,16 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('mcp')
+    .description('Run an MCP server behind belayd: belayd mcp --name <server> -- <command...>')
+    .helpOption(false)
+    .allowUnknownOption()
+    .argument('[args...]')
+    .action(() => {
+      // Handled before the CLI loads (see bin.ts); listed here for --help.
+    });
+
+  program
     .command('doctor')
     .description('Check that belayd is installed and working')
     .action(async () => {
