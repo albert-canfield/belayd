@@ -1,5 +1,5 @@
 import type { CompiledPolicy } from '../policy/load.js';
-import { askDialog, type DialogAnswer } from './dialog.js';
+import { askDialog, type Dialog, type DialogAnswer } from './dialog.js';
 import { notify } from './notify.js';
 import {
   closeRequest,
@@ -50,17 +50,23 @@ export async function holdForApproval(opts: HoldOptions): Promise<HoldResult> {
   const fileChannels = approval.channels.includes('tty') || approval.channels.includes('web');
   if (fileChannels) createRequest(opts.belaydHome, req);
   let dialogAnswer: DialogAnswer | undefined;
+  let dialog: Dialog | undefined;
   if (approval.channels.includes('dialog')) {
     const text = `${truncate(req.label, 300)}\n\n${req.reason}${req.ruleId ? ` (${req.ruleId})` : ''}`;
-    void askDialog(
+    dialog = askDialog(
       `belayd: ${agentName(req.agent)} is waiting`,
       text,
       timeout / 1000,
       opts.env,
-    ).then((a) => (dialogAnswer = a));
+    );
+    void dialog.answer.then((a) => (dialogAnswer = a));
   }
 
-  const cleanup = () => closeRequest(opts.belaydHome, req.id);
+  // An open dialog would keep this process alive after the call was answered elsewhere.
+  const cleanup = () => {
+    dialog?.close();
+    closeRequest(opts.belaydHome, req.id);
+  };
   const onSignal = () => {
     cleanup();
     process.exit(2);
