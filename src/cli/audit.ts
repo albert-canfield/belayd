@@ -1,6 +1,8 @@
 import path from 'node:path';
 import pc from 'picocolors';
 import { AuditLog, type StoredEvent } from '../audit/db.js';
+import { Shadow, type Change } from '../snapshots/shadow.js';
+import { stepChanges } from '../snapshots/undo.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
 const AGENTS: Record<string, string> = {
@@ -104,7 +106,7 @@ export async function sessions(opts: Common & { limit?: string }): Promise<numbe
           `${pc.dim(when(s.started))}  ${s.steps} steps ${flags}`,
       );
     }
-    console.log(pc.dim('\nReplay one: belayd replay <id>'));
+    console.log(pc.dim('\nReplay one: belayd replay <id>    Undo a step: belayd undo <step>'));
     return 0;
   } finally {
     db.close();
@@ -129,7 +131,7 @@ export async function replay(id: string | undefined, opts: Common): Promise<numb
       console.log(JSON.stringify(events, null, 2));
       return 0;
     }
-    printReplay(events);
+    printReplay(events, fileChanges(events));
     return 0;
   } finally {
     db.close();
@@ -153,7 +155,22 @@ export async function gc(opts: { olderThan?: string }): Promise<number> {
   }
 }
 
-export function printReplay(events: StoredEvent[]): void {
+/** Files each step changed, from its snapshots. Empty when snapshots are off or missing. */
+function fileChanges(events: StoredEvent[]): Map<number, Change[]> {
+  const out = new Map<number, Change[]>();
+  const workspace = events[0]?.workspace;
+  if (!workspace) return out;
+  try {
+    const shadow = new Shadow(belaydHome(), workspace);
+    if (!shadow.exists()) return out;
+    for (const s of stepChanges(events, shadow)) out.set(s.step, s.changes);
+  } catch {
+    // replay still works without file details
+  }
+  return out;
+}
+
+export function printReplay(events: StoredEvent[], changes = new Map<number, Change[]>()): void {
   const pre = events.filter((e) => e.phase === 'pre');
   const post = new Map(
     events.filter((e) => e.phase === 'post' && e.toolUseId).map((e) => [e.toolUseId!, e]),
@@ -177,10 +194,17 @@ export function printReplay(events: StoredEvent[]): void {
     const ran = e.toolUseId ? post.get(e.toolUseId) : undefined;
     const time = new Date(e.at).toLocaleTimeString(undefined, { hour12: false });
     const head = `${pc.dim(String(e.step).padStart(width))}  ${pc.dim(time)}  ${icon(e)}  ${pc.dim((e.tool ?? e.kind ?? '').padEnd(6))}`;
-    const lines = (e.label ?? '').split('\n');
+    const lines = (e.label ?? '').split(`${e.workspace}/`).join('').split('\n');
     console.log(`${head} ${oneLine(lines[0] ?? '', 90)}${lines.length > 1 ? pc.dim(' …') : ''}`);
     const story = outcome(e, ran);
-    if (story) console.log(`${' '.repeat(width + 2 + time.length + 5)}${story}`);
+    const pad = ' '.repeat(width + 2 + time.length + 5);
+    if (story) console.log(`${pad}${story}`);
+    for (const c of changes.get(e.step) ?? []) {
+      const counts = c.added !== undefined ? pc.dim(` +${c.added} -${c.removed ?? 0}`) : '';
+      const mark =
+        c.status === 'A' ? pc.green('A') : c.status === 'D' ? pc.red('D') : pc.yellow('M');
+      console.log(`${pad}${mark} ${c.path}${counts}`);
+    }
   }
 }
 

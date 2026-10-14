@@ -94,6 +94,28 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('undo')
+    .description('Put back files an agent changed (default: the last step that changed files)')
+    .argument('[steps]', 'a step number, a range like 5-8, or a list like 5,7')
+    .option('--session <id>', 'a session other than the latest one in this project')
+    .option('--whole-session', 'undo every change the session made')
+    .option('--dry-run', 'show what would change without touching anything')
+    .option('--diff', 'show the diff of each file')
+    .option('--force', 'undo even if the files changed again later')
+    .action(async (steps: string | undefined, opts) => {
+      const { undo } = await import('./undo.js');
+      process.exitCode = await undo(steps, opts);
+    });
+
+  program
+    .command('redo')
+    .description('Reverse the most recent belayd undo in this project')
+    .action(async () => {
+      const { redo } = await import('./undo.js');
+      process.exitCode = await redo();
+    });
+
+  program
     .command('gc')
     .description('Delete audit events older than a number of days')
     .option('--older-than <days>', 'for example 30d', '30d')
