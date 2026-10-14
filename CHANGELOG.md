@@ -6,14 +6,15 @@ The first release. belayd sits between AI coding agents and your machine: one po
 
 ### Policy
 
-- Shell commands are parsed, not pattern-matched. belayd follows quoting, variables, `cd`, aliases, functions, `bash -c`, `eval`, command and process substitution, heredocs and here-strings, pipes into interpreters, base64-encoded scripts, downloads that are executed later, `find -exec` and `-delete`, `xargs`, and wrappers such as `sudo`, `env`, `nice` and `timeout`.
+- Shell commands are parsed, not pattern-matched. belayd follows quoting, variables and word splitting, `cd`, aliases, functions, `bash -c`, `eval`, command and process substitution, heredocs and here-strings, pipes into interpreters, base64-encoded scripts, downloads that are executed later, `find -exec` and `-delete`, `xargs`, `parallel`, `awk`'s `system()`, and wrappers such as `sudo`, `env`, `timeout`, `setsid`, `script`, `tmux`, `screen` and `at`. Anything it cannot see into gets a question.
 - Three presets: `balanced` (default), `strict` and `yolo-with-undo`. Your `belayd.yaml` rules win over the preset; `final` preset rules can only be switched off explicitly.
 - Rules match programs and subcommands, arguments, paths read or written (judged where they really point, through symlinks), network domains, code piped from the internet, and secrets in outgoing data.
-- Shell scripts are read before they run (`bash x.sh`, `./x.sh`, `source x.sh`) and checked line by line.
-- belayd remembers which files the agent changed in a session and asks before running scripts or hooks from them (`npm test` after editing `package.json`, `make` after editing the `Makefile`, `git commit` after adding a hook).
+- Shell scripts are read before they run (`bash x.sh`, `./x.sh`, `source x.sh`, `bash < x.sh`) and checked line by line, with `$1` and `"$@"` standing for the arguments they were given.
+- belayd remembers which files the agent changed in a session, including through code it cannot read, and asks before running scripts or hooks from them (`npm test` or `npm install` after editing `package.json`, `make` after editing the `Makefile`, `git commit` after adding a Git, husky or pre-commit hook).
 - MCP tool calls get the same file and shell rules.
 - `belayd check` shows a decision without running anything.
-- A project `belayd.yaml` only counts in full after `belayd trust`. Until then it can make belayd stricter, never weaker.
+- Your own `~/.belayd/belayd.yaml` applies everywhere, and a project `belayd.yaml` builds on it. A project file only counts in full after `belayd trust`. Until then it can add questions and blocks to your verdict, never take one away.
+- belayd never hangs an agent: if checking a call ever takes longer than 20 seconds, the call is blocked and the reason logged.
 
 ### Agents
 
@@ -37,9 +38,9 @@ The first release. belayd sits between AI coding agents and your machine: one po
 ### Undo
 
 - Snapshots before and after every step that can change files, shell commands included, in a shadow Git repository that never touches your `.git`.
-- `belayd undo` by step, range or whole session, with conflict detection; `belayd redo`.
+- `belayd undo` by step, range or whole session, and `belayd redo`. Both refuse to throw away newer work unless you pass `--force`, and neither writes or deletes through a symlink.
 
 ### Numbers
 
 - Hook overhead of 20 to 50 ms on an M-series Mac (CI fails above 100 ms).
-- About 850 automated tests, including 220 commands checked against every preset. The integrations were also checked by hand in live sessions with Claude Code 2.1.292 and Codex CLI 0.162.
+- About 1,200 automated tests, including 330 commands checked against every preset. The integrations were also checked by hand in live sessions with Claude Code 2.1.292 and Codex CLI 0.162.
