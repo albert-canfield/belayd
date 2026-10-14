@@ -153,8 +153,8 @@ A `belayd.yaml` that arrives with a cloned repository is not trusted until you l
 | Codex | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
-| Copilot CLI | ✓ (not yet tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
-| Ollama | Through the agents it starts | | | | `ollama launch claude`, `codex` or `copilot` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
+| Copilot CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
+| Ollama | ✓, through the agents it starts | Through those agents | ✓ | ✓ | `ollama launch claude`, `codex` and `copilot` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
 | Gemini CLI, Antigravity CLI, OpenCode | Planned | | | | |
 <!-- agents:end -->
 
