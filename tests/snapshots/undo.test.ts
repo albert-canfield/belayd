@@ -274,3 +274,12 @@ describe('snapshot safety', () => {
     expect(tooBroad('/home/dev/code/app', '/home/dev')).toBe(false);
   });
 });
+
+describe('new files', () => {
+  it('undoes a Write that created a file by deleting it', () => {
+    writeStep('src/brand-new.ts', 'export {};\n');
+    expect(read('src/brand-new.ts')).toBe('export {};\n');
+    expect(belayd(sb, ['undo']).status).toBe(0);
+    expect(read('src/brand-new.ts')).toBeUndefined();
+  });
+});
