@@ -111,7 +111,7 @@ $ belayd undo 2
 ✔ Undid 2 file changes.  Changed your mind? belayd redo
 ```
 
-Undo never throws away newer work. If a file changed again after the step you're undoing, belayd says so and stops, unless you pass `--force`. You can undo one step, a range (`belayd undo 5-8`) or a whole session (`belayd undo --whole-session`), and every undo can be redone.
+Undo never throws away newer work. If a file changed again after the step you're undoing, belayd says so and stops, unless you pass `--force`. Redo checks the same way. You can undo one step, a range (`belayd undo 5-8`) or a whole session (`belayd undo --whole-session`), and every undo can be redone.
 
 ## Your policy, in one file
 
