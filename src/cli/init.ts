@@ -17,6 +17,7 @@ import {
 } from '../integrations/claude-code/install.js';
 import { codexDetected, codexHooks, codexTarget } from '../integrations/codex/install.js';
 import { listPresets, POLICY_FILE } from '../policy/load.js';
+import { tooBroad } from '../snapshots/capture.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
 export interface InitOptions {
@@ -71,6 +72,17 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   }
 
   const workspace = findWorkspace(cwd);
+  if (!opts.global && tooBroad(workspace, os.homedir())) {
+    console.error(
+      [
+        `${workspace} is not a project folder (it is your home folder or above it).`,
+        'Run belayd init inside a project, or set belayd up for every project with:',
+        '',
+        '  belayd init --global',
+      ].join('\n'),
+    );
+    return 64;
+  }
   const plans = agents.map((a) => plan(a, opts, workspace, binPath));
   const policyFile = opts.global
     ? path.join(belaydHome(), POLICY_FILE)
