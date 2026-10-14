@@ -19,6 +19,14 @@ export async function runHook(args: string[]): Promise<void> {
           ...(timeoutSec ? { timeoutSec } : {}),
         });
         break;
+      case 'codex': {
+        const { handleCodex } = await import('../integrations/codex/hook.js');
+        result = await handleCodex(input, {
+          env: process.env,
+          ...(timeoutSec ? { timeoutSec } : {}),
+        });
+        break;
+      }
       default:
         result = blockUnknown(`unknown agent "${agent}"`);
     }

@@ -148,13 +148,15 @@ export function belaydHooks(opts: {
   return { PreToolUse: hookHandler(opts), PostToolUse: post, PostToolUseFailure: post };
 }
 
+const AGENT_ARGS = ['claude-code', 'codex'];
+
 export function isBelaydHandler(h: unknown): boolean {
   if (!h || typeof h !== 'object') return false;
   const { command, args } = h as { command?: unknown; args?: unknown };
-  if (Array.isArray(args) && args[1] === 'hook' && args[2] === 'claude-code') return true;
-  return (
-    typeof command === 'string' && /belayd/.test(command) && /\bhook claude-code\b/.test(command)
-  );
+  if (Array.isArray(args) && args[1] === 'hook' && AGENT_ARGS.includes(String(args[2])))
+    return true;
+  // Shell form: belayd's own command structure, not the install path, which may not say belayd.
+  return typeof command === 'string' && /\bhook (claude-code|codex) --timeout \d+\b/.test(command);
 }
 
 export function readSettings(file: string): Settings {
@@ -245,6 +247,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
