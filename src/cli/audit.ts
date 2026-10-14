@@ -190,8 +190,8 @@ export function printReplay(events: StoredEvent[], changes = new Map<number, Cha
     const head = `${pc.dim(String(e.step).padStart(width))}  ${pc.dim(time)}  ${icon(e)}  ${pc.dim((e.tool ?? e.kind ?? '').padEnd(6))}`;
     const lines = (e.label ?? '').split(`${e.workspace}/`).join('').split('\n');
     console.log(`${head} ${oneLine(lines[0] ?? '', 90)}${lines.length > 1 ? pc.dim(' …') : ''}`);
-    const story = outcome(e, ran);
     const pad = ' '.repeat(width + 2 + time.length + 5);
+    const story = outcome(e, ran, (process.stdout.columns || 120) - pad.length);
     if (story) console.log(`${pad}${story}`);
     for (const c of changes.get(e.step) ?? []) {
       const counts = c.added !== undefined ? pc.dim(` +${c.added} -${c.removed ?? 0}`) : '';
@@ -202,7 +202,8 @@ export function printReplay(events: StoredEvent[], changes = new Map<number, Cha
   }
 }
 
-function outcome(e: StoredEvent, ran: StoredEvent | undefined): string {
+/** What happened to a step, in at most `room` characters where that matters. */
+function outcome(e: StoredEvent, ran: StoredEvent | undefined, room: number): string {
   const result = ran
     ? ran.outcome === 'failed'
       ? pc.yellow('failed')
@@ -211,7 +212,9 @@ function outcome(e: StoredEvent, ran: StoredEvent | undefined): string {
   if (e.decision === 'deny') {
     if (e.answeredBy === 'timeout') return pc.red(`no answer in time, blocked`) + rule(e);
     if (e.answeredBy) return pc.red(`you said no (${e.answeredBy})`) + rule(e);
-    return pc.red(`blocked: ${oneLine(e.reason ?? '', 90)}`) + rule(e);
+    // Fits the terminal: the reason is shortened, the rule id is kept whole.
+    const fit = Math.max(30, room - 'blocked: '.length - (e.ruleId ? e.ruleId.length + 4 : 0));
+    return pc.red(`blocked: ${oneLine(e.reason ?? '', fit)}`) + rule(e);
   }
   if (e.verdict === 'ask') {
     if (e.answeredBy)
