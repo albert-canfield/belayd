@@ -58,12 +58,14 @@ export function compile(
   const disabled = new Set<string>();
   let approval: PolicyFile['approval'] = {};
   let failMode: PolicyFile['failMode'];
+  let snapshots: PolicyFile['snapshots'] = {};
   for (const p of chain) {
     for (const r of p.rules) presetRules.set(r.id, r);
     for (const id of p.disable) presetRules.delete(id);
     if (p.default) defaultVerdict = p.default;
     approval = { ...approval, ...p.approval };
     failMode = p.failMode ?? failMode;
+    snapshots = { ...snapshots, ...p.snapshots };
   }
 
   if (user) {
@@ -79,6 +81,7 @@ export function compile(
     }
     approval = { ...approval, ...user.approval };
     failMode = user.failMode ?? failMode;
+    snapshots = { ...snapshots, ...user.snapshots };
     const seen = new Set<string>();
     for (const r of user.rules) {
       if (seen.has(r.id)) throw new PolicyError(`rule id "${r.id}" is used twice`, userFile);
@@ -108,6 +111,10 @@ export function compile(
       port: approval?.port ?? DEFAULT_PORT,
     },
     failMode: failMode ?? 'closed',
+    snapshots: {
+      enabled: snapshots?.enabled ?? true,
+      maxFileSize: toBytes(snapshots?.maxFileSize ?? '20MB'),
+    },
   };
 }
 
@@ -129,4 +136,11 @@ function toMs(v: number | string): number {
   const m = /^(\d+)(ms|s|m)$/.exec(v)!;
   const n = Number(m[1]);
   return m[2] === 'ms' ? n : m[2] === 's' ? n * 1000 : n * 60_000;
+}
+
+function toBytes(v: number | string): number {
+  if (typeof v === 'number') return v;
+  const m = /^(\d+)(KB|MB|GB)$/i.exec(v)!;
+  const unit = m[2]!.toUpperCase();
+  return Number(m[1]) * (unit === 'KB' ? 1024 : unit === 'MB' ? 1024 ** 2 : 1024 ** 3);
 }

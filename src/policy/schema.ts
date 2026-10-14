@@ -61,6 +61,18 @@ export const PolicySchema = z
       .strict()
       .optional(),
     failMode: z.enum(['closed', 'open']).optional(),
+    snapshots: z
+      .object({
+        enabled: z.boolean().optional(),
+        maxFileSize: z
+          .union([
+            z.number().positive(),
+            z.string().regex(/^\d+(KB|MB|GB)$/i, 'use a size like 20MB'),
+          ])
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

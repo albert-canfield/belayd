@@ -31,6 +31,7 @@ export interface CompiledPolicy {
     port: number;
   };
   failMode: 'closed' | 'open';
+  snapshots: { enabled: boolean; maxFileSize: number };
 }
 
 export class PolicyError extends Error {
