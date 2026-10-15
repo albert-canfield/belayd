@@ -191,6 +191,11 @@
 - { write: .claude/settings.json, balanced: ask }
 - { write: /home/dev/.claude/settings.json, balanced: ask, strict: deny }
 - { write: /home/dev/.codex/hooks.json, balanced: ask, strict: deny }
+- { write: .github/copilot/settings.local.json, balanced: ask }
+- { write: .github/hooks/belayd.json, balanced: ask }
+- { write: /home/dev/.copilot/hooks/belayd.json, balanced: ask, strict: deny }
+- { cmd: 'echo "{}" > .github/copilot/settings.local.json', balanced: ask }
+- { write: .github/workflows/ci.yml, balanced: pass }
 - { cmd: 'echo "{}" > ~/.claude/settings.json', balanced: ask, strict: deny }
 
 # --- Privileges, packages, publishing, infrastructure -------------------------

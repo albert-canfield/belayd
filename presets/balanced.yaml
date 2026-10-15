@@ -196,6 +196,11 @@ rules:
         - '{workspace}/.cursor/hooks.json'
         - '{home}/.gemini/settings.json'
         - '{workspace}/.gemini/settings.json'
+        - '{home}/.copilot/hooks/**'
+        - '{home}/.copilot/config.json'
+        - '{workspace}/.github/hooks/**'
+        - '{workspace}/.github/copilot/settings.json'
+        - '{workspace}/.github/copilot/settings.local.json'
     decision: ask
     reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
 
