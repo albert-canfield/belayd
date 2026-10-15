@@ -234,7 +234,12 @@ function mcpCommand(args: unknown): string | undefined {
 const SPECIAL_FILES = /^\/dev\/(null|zero|stdout|stderr|stdin|tty|fd\/\d+|random|urandom)$/;
 const GLOB_CHARS = /[*?[]/;
 
-export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
+export function buildSubjects(
+  action: Action,
+  ctx: ActionContext,
+  /** Files the agent changed earlier in this session: scripts among them are read before they run. */
+  sessionWrites?: Set<string>,
+): Subject[] {
   switch (action.kind) {
     case 'shell': {
       const analysis = analyzeShell(action.command, {
@@ -243,6 +248,12 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
         env: safeEnv(),
         readScript,
         fileExists: (p) => fs.existsSync(p),
+        ...(sessionWrites && sessionWrites.size > 0
+          ? {
+              agentWrote: (p: string) =>
+                sessionWrites.has(p) || sessionWrites.has(canonicalPath(p)),
+            }
+          : {}),
       });
       const subjects = analysis.invocations.map((inv) => fromInvocation(inv, ctx));
       if (analysis.errors.length > 0) {
@@ -295,7 +306,7 @@ export function buildSubjects(action: Action, ctx: ActionContext): Subject[] {
       };
       // Shell-style MCP tools (execute_command, run_terminal_cmd, ...) get the full shell analysis.
       const command = SHELL_MCP_TOOL.test(action.tool) ? mcpCommand(action.args) : undefined;
-      const shell = command ? buildSubjects({ kind: 'shell', command }, ctx) : [];
+      const shell = command ? buildSubjects({ kind: 'shell', command }, ctx, sessionWrites) : [];
       return [main, ...shell];
     }
     case 'tool':

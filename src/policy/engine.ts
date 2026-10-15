@@ -28,7 +28,7 @@ export function evaluate(
   policy: CompiledPolicy,
   opts: EvaluateOptions,
 ): Decision {
-  const subjects = buildSubjects(action, ctx);
+  const subjects = buildSubjects(action, ctx, opts.sessionWrites);
   const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
   const results = subjects.map((s) => decideSubject(s, policy, env));
 
@@ -68,7 +68,7 @@ export function judgeSubjects(
   opts: EvaluateOptions,
 ): { subject: Subject; verdict: Verdict; rule?: LayeredRule }[] {
   const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
-  return buildSubjects(action, ctx).map((subject) => {
+  return buildSubjects(action, ctx, opts.sessionWrites).map((subject) => {
     const r = decideSubject(subject, policy, env);
     return { subject, verdict: r.verdict, ...(r.rule ? { rule: r.rule } : {}) };
   });

@@ -80,6 +80,11 @@ export interface AnalyzeOptions {
   readScript?: (absPath: string) => { text: string; truncated: boolean } | undefined;
   /** Whether a file exists, so a shell script that is not there yet counts as unseen code. */
   fileExists?: (absPath: string) => boolean;
+  /**
+   * Whether the agent wrote or changed this file earlier in the session. A Python, Node,
+   * Ruby or Perl script it wrote is read like inline code before it runs.
+   */
+  agentWrote?: (absPath: string) => boolean;
 }
 
 const MAX_DEPTH = 6;
@@ -118,6 +123,8 @@ const INTERPRETERS: Record<string, { inline: string[]; module?: string[] }> = {
   node: { inline: ['-e', '--eval', '-p', '--print'] },
   nodejs: { inline: ['-e', '--eval', '-p', '--print'] },
   bun: { inline: ['-e', '--eval', '-p', '--print'] },
+  tsx: { inline: ['-e', '--eval', '-p', '--print'] },
+  'ts-node': { inline: ['-e', '--eval', '-p', '--print'] },
   deno: { inline: ['eval'] },
   perl: { inline: ['-e', '-E'] },
   ruby: { inline: ['-e'] },
@@ -1519,6 +1526,7 @@ class Analyzer {
         if (script) {
           inv.codeFrom.push(...this.codeSources(script, scope));
           this.runScript(inv, script, scope, ctx, false, false);
+          this.agentScript(program, inv, script, scope, ctx, text);
         } else this.stdinCode(inv, stdin, scope, ctx, false);
       }
     }
@@ -1719,6 +1727,44 @@ class Analyzer {
       .map((w) => w.value)
       .join('\n');
     if (code.length > MAX_INLINE_CODE) return false;
+    this.scanCode(interpreter, code, text, scope, ctx);
+    return true;
+  }
+
+  /**
+   * A script in another language that the agent wrote earlier in this session. Other
+   * scripts are judged by their command line alone, as before: reading every build
+   * script in a project would mostly produce noise. One the agent just wrote is the
+   * write-then-run case, so its shell calls, deletes and reads are checked like
+   * `python -c` code. This only ever adds findings.
+   */
+  private agentScript(
+    interpreter: string,
+    inv: Invocation,
+    file: EvalWord,
+    scope: Scope,
+    ctx: Ctx,
+    text: string,
+  ): void {
+    if (!file.resolved || !this.opts.agentWrote || !this.opts.readScript || this.exhausted) return;
+    const abs = resolveIn(scope.cwd, file.value, this.opts.home);
+    if (!abs || scope.written.has(abs) || !this.opts.agentWrote(abs)) return;
+    if (ctx.depth >= MAX_DEPTH) return;
+    const script = this.opts.readScript(abs);
+    if (!script) return;
+    if (script.truncated || script.text.length > MAX_INLINE_CODE) {
+      inv.dynamic = true;
+      inv.note = `runs ${file.value}, which the agent wrote in this session and which is too large for belayd to check`;
+      return;
+    }
+    this.scanCode(interpreter, script.text, text, scope, {
+      ...ctx,
+      via: [...ctx.via, path.posix.basename(abs)],
+    });
+  }
+
+  /** Shell calls, deletes and reads in Python, Node, Ruby or Perl code, checked as commands. */
+  private scanCode(interpreter: string, code: string, text: string, scope: Scope, ctx: Ctx): void {
     // Python's exec() runs Python, not a shell.
     const shellCalls = interpreter.startsWith('python')
       ? SHELL_CALLS.filter((c) => c !== 'exec')
@@ -1733,7 +1779,6 @@ class Analyzer {
       const target = expandUser(unquote(body), this.opts.home);
       this.invoke([literal('cat'), literal(target)], text, scope, ctx, undefined, []);
     }
-    return true;
   }
 
   /** `uv run cmd`, `poetry run cmd`, `doppler run -- cmd`: checks the command they start. */
@@ -1949,7 +1994,14 @@ class Analyzer {
       /\.(sh|bash|zsh)$/.test(abs) ||
       /^#!.*\b(ba|z|da|k)?sh\b/.test(head) ||
       (!head.startsWith('#!') && !head.includes('\0'));
-    if (parse === 'shebang' && !shellish) return;
+    if (parse === 'shebang' && !shellish) {
+      // `./build.py` with `#!/usr/bin/env python3`: read it if the agent wrote it.
+      const interpreter = /^#!.*?\b(python[\d.]*|node|nodejs|bun|deno|ruby|perl|php)\b/.exec(
+        head,
+      )?.[1];
+      if (interpreter) this.agentScript(interpreter, inv, file, scope, ctx, file.value);
+      return;
+    }
     if (script.truncated) return unseen('is too large for belayd to check');
     const target = sameScope ? scope : cloneScope(scope);
     const callerArgs = target.positional;
