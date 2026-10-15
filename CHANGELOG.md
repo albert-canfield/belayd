@@ -4,6 +4,8 @@
 
 ### New
 
+- A GitHub Action (`uses: albert-canfield/belayd@v0.2.0`) for agents that run in CI: it installs belayd and its hooks, turns questions into a no (nobody is watching), and puts each session's timeline in the job summary. `fail-on-block: true` fails the job when belayd blocked something.
+- Windows through WSL: belayd inside a WSL distribution works as on Linux, and CI now runs the whole test suite in Ubuntu on WSL.
 - OpenCode support: `belayd init --agent opencode` installs a small plugin that checks every tool call before it runs, records what ran and snapshots it for undo. Tried live with OpenCode 1.19.0, directly and through `ollama launch opencode`.
 - A differential test (`pnpm differential`, in CI): about 650 commands run for real in a throwaway container, and the build fails if bash did something dangerous that belayd let through.
 - `belayd tune` turns questions you keep approving into allow rules. A learned rule allows that exact command or file and nothing else, steps aside when the agent changed a script or hook it would run, and is never learned from a final rule or from something belayd could not see into.

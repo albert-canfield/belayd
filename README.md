@@ -182,6 +182,19 @@ To put an MCP server behind belayd, either wrap a config file (`belayd mcp wrap 
 belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 ```
 
+## In CI
+
+Coding agents run unattended in CI too, where nobody is watching the log. The belayd action sets up belayd and its hooks for the agents in the job, and when the job ends it puts what every agent did, and what belayd decided, in the job summary:
+
+```yaml
+- uses: albert-canfield/belayd@v0.2.0
+  with:
+    fail-on-block: true # fail the job if belayd blocked anything
+- run: claude -p "Fix the failing test in src/parser.ts"
+```
+
+Nobody can answer a question in CI, so there a question becomes a no after one second. Inputs: `agents` (default: all five hook agents), `preset`, `policy` (a `belayd.yaml` from the repository), `approval-timeout` and `fail-on-block`. A `belayd.yaml` inside the repository counts only where it is stricter, as on any new machine, unless you pass it as `policy`.
+
 ## How it works
 
 ```text
@@ -258,7 +271,7 @@ It blocks. A broken policy file, a crash or garbage input all end in "no", with 
 No. There is no account, no telemetry and no network call. The approval page listens on 127.0.0.1 only and needs a key from your machine.
 
 **Windows?**
-Not yet. belayd runs on macOS and Linux with Node 22 or newer.
+Inside WSL, yes: install belayd in the same WSL distribution your agent runs in, and it works as on any Linux. CI runs the whole test suite in Ubuntu on WSL. Agents running natively on Windows are not supported yet. Otherwise belayd runs on macOS and Linux with Node 22 or newer.
 
 **How do I turn it off?**
 `belayd uninstall`. Your `belayd.yaml`, audit log and snapshots stay where they are.
