@@ -8,8 +8,8 @@
     <text x="4" y="64" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#fafaf9">Let your agent climb.</text>
     <text x="4" y="104" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="600" fill="#ea580c">belayd catches the fall.</text>
     <text x="4" y="160" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#a8a29e">One policy, one audit trail and one undo button</text>
-    <text x="4" y="188" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#a8a29e">for Claude Code, Codex, Copilot CLI, Gemini CLI</text>
-    <text x="4" y="216" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#a8a29e">and any MCP server. Open source, all local.</text>
+    <text x="4" y="188" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#a8a29e">for Claude Code, Codex, Copilot CLI, Gemini CLI,</text>
+    <text x="4" y="216" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" fill="#a8a29e">OpenCode and any MCP server. Open source, all local.</text>
   </g>
   <g>
     <rect x="650" y="70" width="570" height="300" rx="14" fill="#161412" stroke="#2a2623"/>
