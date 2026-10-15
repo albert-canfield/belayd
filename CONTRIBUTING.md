@@ -23,7 +23,10 @@ pnpm install
 pnpm verify          # typecheck, lint, format check and tests
 pnpm build           # bundles to dist/
 node scripts/bench-hook.mjs   # hook latency, fails above 100 ms of overhead
+pnpm differential    # needs Docker: runs every command for real and compares
 ```
+
+`pnpm differential` is the test that keeps the shell analysis honest. It runs each command of the corpus, plus generated variants that hide a dangerous action in many ways, in a container with no network, as an unprivileged user, and records what bash really deleted, wrote and read. Anything dangerous that belayd let through fails the run, unless it is listed with a reason in `tests/differential/known-misses.txt`. Add a disguise to `tests/differential/cases.mjs` when you think of one: if it fails, you found a bypass. `--only <text>` runs just the commands containing that text.
 
 Run your build against a real agent without touching your own setup:
 

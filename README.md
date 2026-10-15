@@ -83,7 +83,7 @@ With the default `balanced` policy:
 | `rm -rf node_modules dist` | quiet | Inside the project, and undo can bring it back |
 <!-- catches:end -->
 
-Every row above is checked by the test suite, together with [over 400 more](tests/policy/corpus.yaml) for each of the three presets.
+Every row above is checked by the test suite, together with [over 400 more](tests/policy/corpus.yaml) for each of the three presets. CI also runs about 650 commands for real in a throwaway container, each of them hiding a delete, a secret read or a write to your home folder in a different way, and fails if bash did anything dangerous that belayd let through. The one known exception is listed, with the reason, in [`known-misses.txt`](tests/differential/known-misses.txt).
 
 ## Undo, step by step
 

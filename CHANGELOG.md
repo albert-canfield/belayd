@@ -4,12 +4,14 @@
 
 ### New
 
+- A differential test (`pnpm differential`, in CI): about 650 commands run for real in a throwaway container, and the build fails if bash did something dangerous that belayd let through.
 - `belayd tune` turns questions you keep approving into allow rules. A learned rule allows that exact command or file and nothing else, steps aside when the agent changed a script or hook it would run, and is never learned from a final rule or from something belayd could not see into.
 - Two match fields: `argv` (the whole command, word for word) and `pathsOnly` (every path the action touches must be on the list).
 - Python, Node, Ruby and Perl scripts the agent wrote in the session are read before they run, like `python -c` code: `python3 build.py` with `os.system("rm -rf ~")` inside is blocked. Scripts that were already in your project are judged by their command line, as before. `tsx` and `ts-node` count as Node.
 
 ### Fixes
 
+- Found by the new differential test: code sourced from a process substitution was not read (`source <(echo 'rm -rf ~')` passed), and commands given to code as a list of words were not seen (`subprocess.run(["rm", "-rf", "/"])`, `spawnSync("rm", [...])`, Ruby's and Perl's `system("rm", "-rf", dir)`). Both are checked now. Code from `<(...)` that belayd cannot read gets a question.
 - Commands started through environment runners were not checked: `uv run rm -rf ~` passed. belayd now follows `uv run`, `poetry run`, `pipenv run`, `pdm run`, `rye run`, `hatch run`, `pixi run`, `conda`/`mamba`/`micromamba run`, `bundle exec`, `devbox run`, `asdf`/`rbenv`/`pyenv`/`nodenv exec`, `mise exec`, `direnv exec`, `dotenv`, `dotenvx run`, `op run`, `doppler run`, `infisical run`, `aws-vault exec`, `chamber exec`, `nix-shell --run` and `nix develop -c`.
 - Editing Copilot CLI's hook settings (`.github/hooks/`, `.github/copilot/settings*.json`, `~/.copilot/hooks/`) now asks first, like the other agents' settings. Before, an agent could switch belayd off for Copilot CLI without a question.
 - `belayd tune` is on the list of commands an agent may not run.
