@@ -117,7 +117,7 @@ By default a hook that crashes, times out (default timeout 600 s), cannot start,
 - A Claude Code "mod" that handles `tool.check` runs after hooks and can approve a call a `PreToolUse` hook blocked, unless the hook lives in managed settings. A team that needs belayd to be non-bypassable should install it through managed settings.
 - `disableAllHooks` turns off user and project hooks.
 - MCP tools marked `requiresUserInteraction` still prompt even when a hook returns `allow`. That is fine for us.
-- Hooks are cooperative. They see the tool call, not what a script does after it starts. `python build.py` is evaluated as `python build.py`, not as the contents of `build.py`.
+- Hooks are cooperative. They see the tool call, not what a script does after it starts. `python build.py` is evaluated as `python build.py`, not as the contents of `build.py`, unless the agent wrote `build.py` in the same session: then its shell calls, deletes and reads with literal arguments are checked too (since 0.2.0).
 
 ### belayd strategy
 

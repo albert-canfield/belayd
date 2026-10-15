@@ -44,9 +44,9 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
 
 ## What you get
 
-**It reads commands the way your shell does.** Not a regex over a string: belayd parses the command and follows quotes, variables, `cd`, aliases, functions, `bash -c`, `eval`, `$(...)`, heredocs, pipes into interpreters and even base64, then checks every program that would actually run. It reads shell scripts before they run too, so `bash cleanup.sh` is judged by what is inside `cleanup.sh`. Anything it can't see into gets a question, never a guess.
+**It reads commands the way your shell does.** Not a regex over a string: belayd parses the command and follows quotes, variables, `cd`, aliases, functions, `bash -c`, `eval`, `$(...)`, heredocs, pipes into interpreters, `uv run` and `poetry run`, and even base64, then checks every program that would actually run. It reads shell scripts before they run too, so `bash cleanup.sh` is judged by what is inside `cleanup.sh`. Anything it can't see into gets a question, never a guess.
 
-**It notices the sneaky version.** The classic way around a command allowlist is to edit `package.json` and then run `npm test`. belayd remembers which files the agent changed in the session, and asks before it runs scripts or Git hooks from one of them.
+**It notices the sneaky version.** The classic way around a command allowlist is to edit `package.json` and then run `npm test`. belayd remembers which files the agent changed in the session, and asks before it runs scripts or Git hooks from one of them. When the agent writes a Python, Node, Ruby or Perl script and then runs it, belayd reads the script first and checks the shell commands, deletes and file reads inside it.
 
 **It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day.
 
@@ -220,7 +220,7 @@ A sandbox and belayd solve different problems. A sandbox contains code you don't
 
 Plain words, because a safety tool that oversells itself is worse than none:
 
-- **belayd is a guardrail, not a sandbox.** It sees the tool calls an agent makes through its hooks. A program the agent starts can do whatever that program does: `python build.py` is judged as `python build.py`, not by what the script contains. Inline code (`python -c`, `node -e`) can't be analysed; `strict` asks about it.
+- **belayd is a guardrail, not a sandbox.** It sees the tool calls an agent makes through its hooks. A program the agent starts can do whatever that program does. belayd reads scripts the agent wrote in the session, and inline code (`python -c`, `node -e`), for the common dangerous shapes: shell calls, deletes and reads with plain string arguments. It does not run or fully understand that code, and a script that was already in your project is judged by its command line alone. `strict` asks about inline code and about any script the agent wrote.
 - **It only sees what the hooks see.** Files you `@`-mention in a Claude Code prompt are inserted without a tool call. A Claude Code mod that handles `tool.check` can override hook decisions unless belayd is installed through managed settings. Codex documents that a few internal tool paths skip hooks.
 - **Agents fail open on some failures.** belayd always answers before the agent's hook timeout, blocks on its own errors, and installs a guard that turns a crash into a block. Claude Code 2.1.295 and later also block on hook timeouts; older versions don't.
 - **Undo covers files in the project**, up to 20 MB each. It can't take back a push, an email, a database write or a file outside the project.
