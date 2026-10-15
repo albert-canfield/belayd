@@ -4,6 +4,7 @@
 
 ### New
 
+- OpenCode support: `belayd init --agent opencode` installs a small plugin that checks every tool call before it runs, records what ran and snapshots it for undo. Tried live with OpenCode 1.19.0, directly and through `ollama launch opencode`.
 - A differential test (`pnpm differential`, in CI): about 650 commands run for real in a throwaway container, and the build fails if bash did something dangerous that belayd let through.
 - `belayd tune` turns questions you keep approving into allow rules. A learned rule allows that exact command or file and nothing else, steps aside when the agent changed a script or hook it would run, and is never learned from a final rule or from something belayd could not see into.
 - Two match fields: `argv` (the whole command, word for word) and `pathsOnly` (every path the action touches must be on the list).

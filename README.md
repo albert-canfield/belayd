@@ -14,7 +14,7 @@
 
 Coding agents are fast, confident, and running with your permissions. Most days that's great. Then one of them force pushes to main, reads your `.env` into its context, or tidies up the wrong folder, and you find out afterwards.
 
-**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI and any MCP server.
+**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI, OpenCode and any MCP server.
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="100%" alt="belayd blocking a curl-to-bash install and a hidden rm -rf, replaying an agent session where it stopped rm -rf ~ and a read of .env, then undoing the step that broke the build">
@@ -166,11 +166,12 @@ A learned rule matches that exact command, word for word, touching the same path
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
 | Copilot CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Copilot CLI hooks |
-| Ollama | ✓, through the agents it starts | Through those agents | ✓ | ✓ | `ollama launch claude`, `codex` and `copilot` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
+| Ollama | ✓, through the agents it starts | Through those agents | ✓ | ✓ | `ollama launch claude`, `codex`, `copilot` and `opencode` start agents that run belayd's hooks. Ollama's own agent has no hooks yet |
 | Gemini CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Gemini CLI hooks (`BeforeTool`, `AfterTool`) |
 | Claude desktop app | ✓ (not tried in a live session) | Claude Code's prompt | ✓ | ✓ | Its coding sessions run Claude Code's hooks |
 | ChatGPT desktop app | ✓ (not tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Its Codex agent runs Codex's hooks from `~/.codex` |
-| Antigravity CLI, OpenCode | Planned | | | | |
+| OpenCode | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | A belayd plugin in `.opencode/plugins/` (`tool.execute.before` and `after`) |
+| Antigravity CLI | Planned | | | | |
 <!-- agents:end -->
 
 Codex can't show its own prompt from a hook (it treats a hook's "ask" as an error and runs the command), so belayd never sends it one: it holds the call and asks you itself.
