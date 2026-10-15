@@ -87,6 +87,17 @@ export const AGENTS: readonly AgentEntry[] = [
     setup: () => import('./gemini/setup.js').then((m) => m.geminiSetup),
   },
   {
+    id: 'opencode',
+    name: 'OpenCode',
+    aliases: ['open-code', 'sst-opencode'],
+    support: 'hooks',
+    detect: (env) =>
+      exists(env.XDG_CONFIG_HOME || path.join(home(env), '.config'), 'opencode') ||
+      exists(home(env), '.opencode'),
+    dialect: () => import('./opencode/hook.js').then((m) => m.opencodeDialect),
+    setup: () => import('./opencode/setup.js').then((m) => m.opencodeSetup),
+  },
+  {
     id: 'claude-desktop',
     name: 'Claude desktop app',
     aliases: ['claude-app'],
@@ -111,7 +122,7 @@ export const AGENTS: readonly AgentEntry[] = [
     name: 'Ollama',
     aliases: [],
     support: 'launcher',
-    launches: ['claude-code', 'codex', 'copilot'],
+    launches: ['claude-code', 'codex', 'copilot', 'opencode'],
     gap: "Ollama's own agent (the bare `ollama` command) has no hooks belayd can use yet.",
     detect: (env) => exists(env.OLLAMA_MODELS ?? path.join(home(env), '.ollama')),
   },

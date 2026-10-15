@@ -4,6 +4,7 @@ export type AgentId =
   | 'cursor'
   | 'copilot'
   | 'gemini'
+  | 'opencode'
   | 'ollama'
   | 'claude-desktop'
   | 'chatgpt'
