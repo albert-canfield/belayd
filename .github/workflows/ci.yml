@@ -54,3 +54,65 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm differential
+
+  action:
+    # The GitHub Action in this repository, on a real runner: set up, an agent's tool
+    # call goes through belayd, and the summary lists it.
+    name: GitHub Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: ./
+        with:
+          version: local
+          agents: claude-code
+      - name: A Claude Code tool call goes through belayd
+        run: |
+          cmd=$(node -e 'console.log(require(process.env.HOME + "/.claude/settings.json").hooks.PreToolUse[0].hooks[0].command)')
+          printf '{"hook_event_name":"PreToolUse","session_id":"ci","cwd":"%s","tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"rm -rf ~"}}' "$PWD" \
+            | sh -c "$cmd" | tee out.json
+          grep -q '"permissionDecision":"deny"' out.json
+      - name: The summary lists it
+        run: |
+          STATE_home="$BELAYD_HOME" GITHUB_STEP_SUMMARY="$RUNNER_TEMP/summary.md" node action/post.mjs
+          cat "$RUNNER_TEMP/summary.md"
+          grep -q '1 blocked' "$RUNNER_TEMP/summary.md"
+
+  wsl:
+    # belayd inside WSL is belayd on Linux: the whole test suite, in Ubuntu on Windows.
+    name: Linux inside WSL on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: git ca-certificates curl xz-utils python3
+          wsl-shell-user: dev
+      - name: Node 22 and pnpm inside WSL
+        shell: wsl-bash {0}
+        run: |
+          ver=$(curl -fsSL https://nodejs.org/dist/index.json | python3 -c 'import json, sys; print(next(r["version"] for r in json.load(sys.stdin) if r["version"].startswith("v22.")))')
+          mkdir -p ~/node
+          curl -fsSL "https://nodejs.org/dist/$ver/node-$ver-linux-x64.tar.xz" | tar -xJ -C ~/node --strip-components=1
+          ~/node/bin/npm install --global --no-fund --no-audit pnpm@10.10.0
+          ~/node/bin/node --version
+      - name: Test suite inside WSL
+        shell: wsl-bash {0}
+        run: |
+          export PATH="$HOME/node/bin:$PATH"
+          rm -rf ~/belayd
+          git -c safe.directory='*' clone -q "$PWD" ~/belayd
+          cd ~/belayd
+          pnpm install --frozen-lockfile
+          pnpm verify
+          pnpm build
+          node dist/bin.js check 'rm -rf ~' | tee out.txt
+          grep -q deny out.txt

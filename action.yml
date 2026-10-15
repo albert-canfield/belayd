@@ -1,0 +1,31 @@
+name: belayd
+description: Checks every tool call a coding agent makes in this job, blocks the dangerous ones and puts the record in the job summary.
+author: Albert Canfield
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  agents:
+    description: Agents to set up, separated by commas (claude-code, codex, copilot, gemini, opencode).
+    default: claude-code,codex,copilot,gemini,opencode
+  preset:
+    description: The policy preset, balanced, strict or yolo-with-undo. Ignored when policy is set.
+    default: balanced
+  policy:
+    description: A belayd.yaml in the repository to use as the policy for this job.
+    default: ''
+  approval-timeout:
+    description: Seconds belayd waits for an answer when it asks. Nobody is watching a CI job, so the default turns a question into a no after 1 second.
+    default: '1'
+  fail-on-block:
+    description: Fail the job at the end if belayd blocked anything.
+    default: 'false'
+  version:
+    description: The belayd-cli version to install. Empty means the version of this action.
+    default: ''
+
+runs:
+  using: node24
+  main: action/main.mjs
+  post: action/post.mjs
