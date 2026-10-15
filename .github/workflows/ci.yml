@@ -38,3 +38,19 @@ jobs:
           cd "$RUNNER_TEMP"
           npx --yes --package "$RUNNER_TEMP/$tgz" belayd check 'rm -rf ~' | tee out.txt
           grep -q deny out.txt
+
+  differential:
+    # Runs about 650 commands for real in a throwaway container and checks that
+    # belayd blocked or asked about everything dangerous they did.
+    name: Differential test against real bash
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm differential

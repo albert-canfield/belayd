@@ -1,0 +1,6 @@
+# Commands that really did something dangerous in the differential test while belayd
+# said nothing, and that are known limits rather than bugs. One per line:
+#   <command><TAB># why
+# A newline inside a command is written as \n. scripts/differential.mjs fails on any
+# miss that is not listed here, and tells you when a listed one is caught again.
+git add -A && git commit -m wip	# git hashes a .env that is not in .gitignore into the index without showing it to anyone; keeping secrets out of commits is out of scope
