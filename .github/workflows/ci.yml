@@ -102,8 +102,9 @@ jobs:
           ver=$(curl -fsSL https://nodejs.org/dist/index.json | python3 -c 'import json, sys; print(next(r["version"] for r in json.load(sys.stdin) if r["version"].startswith("v22.")))')
           mkdir -p ~/node
           curl -fsSL "https://nodejs.org/dist/$ver/node-$ver-linux-x64.tar.xz" | tar -xJ -C ~/node --strip-components=1
-          ~/node/bin/npm install --global --no-fund --no-audit pnpm@10.10.0
-          ~/node/bin/node --version
+          export PATH="$HOME/node/bin:$PATH"
+          npm install --global --no-fund --no-audit pnpm@10.10.0
+          node --version && pnpm --version
       - name: Test suite inside WSL
         shell: wsl-bash {0}
         run: |
