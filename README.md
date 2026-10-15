@@ -132,11 +132,29 @@ rules:
 | `strict` | Asks, except for reading the project and read-only commands | Sensitive repositories, unattended runs |
 | `yolo-with-undo` | Allows, so your agent stops prompting you | Moving fast, with undo as the safety net |
 
-Rules can match on the program and subcommand (`git push`), arguments, file paths (read, written or either), network domains, code piped from the internet, and secrets in outgoing data. The presets are plain YAML in [`presets/`](presets): they double as examples. A few rules are marked `final`: your own rules can't weaken them, and switching one off takes an explicit `disable:` line that shows up in the audit log. More examples live in [`examples/`](examples).
+Rules can match on the program and subcommand (`git push`), arguments, the exact command (`argv`), file paths (read, written or either), network domains, code piped from the internet, and secrets in outgoing data. The presets are plain YAML in [`presets/`](presets): they double as examples. A few rules are marked `final`: your own rules can't weaken them, and switching one off takes an explicit `disable:` line that shows up in the audit log. More examples live in [`examples/`](examples).
 
 Your own policy lives in `~/.belayd/belayd.yaml` and applies everywhere. A project can have its own `belayd.yaml` too, which builds on yours: your rules still apply inside the project, the project's settings win where both set one, and a project rule with the same `id` as one of yours replaces it.
 
 A `belayd.yaml` that arrives with a cloned repository is not trusted until you look at it. Until you run `belayd trust`, it can make belayd stricter but never weaker: its deny and ask rules can add a question or a block on top of what your policy decided, never take one away, and its allow rules, switches and approval settings are ignored. The file `belayd init` writes for you is trusted from the start, and editing a trusted file untrusts it until you run `belayd trust` again.
+
+### Fewer questions over time
+
+If you keep saying yes to the same thing, `belayd tune` offers to stop asking:
+
+```console
+$ belayd tune
+belayd tune · my-app · 1 suggestion
+Each one allows exactly that command or file, and nothing else.
+
+ 1  git push --force-with-lease origin feat
+    you approved it 4 times, last Oct 15 · asked by ask-force-push-with-lease
+
+Allow 1 (git push --force-with-lease origin feat)? [y/N] y
+✔ Added 1 rule to belayd.yaml. belayd will stop asking about it.
+```
+
+A learned rule matches that exact command, word for word, touching the same paths. `git push --force-with-lease origin main` still asks, and so does the same push after the agent edited a Git hook in the session, or one that would send a secret. belayd never learns from a final rule or from a question about something it couldn't see into. Rules go into the project's own `belayd.yaml` if you trust it, or into yours with `--global`. Suggestions start at 3 approvals (`--min` changes that).
 
 ## Supported agents
 
@@ -223,6 +241,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | `belayd undo [steps]`, `belayd redo` | Put files back, and take that back |
 | `belayd mcp` | Run an MCP server behind belayd, or wrap a config file |
 | `belayd trust` | Let a project's `belayd.yaml` apply in full, after you've reviewed it |
+| `belayd tune` | Turn questions you keep approving into exact allow rules |
 | `belayd doctor` | Check that everything is installed and working |
 | `belayd uninstall` | Remove every hook belayd installed (your log and snapshots stay) |
 

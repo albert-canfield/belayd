@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+### New
+
+- `belayd tune` turns questions you keep approving into allow rules. A learned rule allows that exact command or file and nothing else, steps aside when the agent changed a script or hook it would run, and is never learned from a final rule or from something belayd could not see into.
+- Two match fields: `argv` (the whole command, word for word) and `pathsOnly` (every path the action touches must be on the list).
+
+### Fixes
+
+- Editing Copilot CLI's hook settings (`.github/hooks/`, `.github/copilot/settings*.json`, `~/.copilot/hooks/`) now asks first, like the other agents' settings. Before, an agent could switch belayd off for Copilot CLI without a question.
+- `belayd tune` is on the list of commands an agent may not run.
+
 ## 0.1.0 (2026-10-14)
 
 The first release. belayd sits between AI coding agents and your machine: one policy, one audit trail and one undo button for Claude Code, Codex, Copilot CLI, Gemini CLI and MCP servers.
