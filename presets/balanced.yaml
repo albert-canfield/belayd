@@ -202,6 +202,11 @@ rules:
         - '{workspace}/.github/hooks/**'
         - '{workspace}/.github/copilot/settings.json'
         - '{workspace}/.github/copilot/settings.local.json'
+        - '{workspace}/.opencode/**'
+        - '{workspace}/opencode.json'
+        - '{workspace}/opencode.jsonc'
+        - '{home}/.config/opencode/**'
+        - '{home}/.opencode/**'
     decision: ask
     reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
 
