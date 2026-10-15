@@ -505,6 +505,8 @@ interface EvalWord {
   resolved: boolean;
   /** Programs run inside `$(...)` or `<(...)` within this word. */
   subPrograms: string[];
+  /** For a word that is just `<(cmd)`: what cmd prints, when that is known. */
+  substituted?: string;
   /**
    * Set when an unquoted expansion split this word into several (`X="rm -rf"; $X ~`),
    * or removed it (an empty `$X`): one list of words per alternative in `values`.
@@ -1779,6 +1781,33 @@ class Analyzer {
       const target = expandUser(unquote(body), this.opts.home);
       this.invoke([literal('cat'), literal(target)], text, scope, ctx, undefined, []);
     }
+    // The command as separate words: `subprocess.run(["rm", "-rf", p])`,
+    // `spawnSync("rm", ["-rf", p])`, Ruby's and Perl's `system("rm", "-rf", dir)`. A word
+    // that is not a plain string is unknown, so `rm -rf <unknown>` still asks.
+    const varargs = /^(ruby|perl)/.test(interpreter);
+    for (const args of callArgs(code, varargs ? VARARG_CALLS : ARGV_CALLS)) {
+      const [a, b] = args;
+      let words: (string | undefined)[] | undefined;
+      if (a?.kind === 'list') words = a.items;
+      else if (a?.kind === 'string' && b?.kind === 'list') words = [a.value, ...b.items];
+      else if (
+        varargs &&
+        a?.kind === 'string' &&
+        args.length > 1 &&
+        args.every((x) => x.kind !== 'list')
+      )
+        words = args.map((x) => (x.kind === 'string' ? x.value : undefined));
+      const program = words?.[0];
+      if (!words || program === undefined || program === '') continue;
+      this.invoke(
+        words.map((w) => (w === undefined ? unknownWord('<a value from the code>') : literal(w))),
+        text,
+        cloneScope(scope),
+        { ...ctx, depth: ctx.depth + 1 },
+        undefined,
+        [],
+      );
+    }
   }
 
   /** `uv run cmd`, `poetry run cmd`, `doppler run -- cmd`: checks the command they start. */
@@ -1952,7 +1981,23 @@ class Analyzer {
     /** The script's own arguments, which `$1` and `"$@"` stand for inside it. */
     scriptArgs?: EvalWord[],
   ): void {
-    if (file.subPrograms.length > 0) return; // `bash <(curl ...)`: judged by where it comes from
+    if (file.subPrograms.length > 0) {
+      // `bash <(curl ...)` is judged by where the code comes from. `source <(echo 'rm
+      // -rf ~')` holds code belayd can read; anything else it cannot see.
+      if (!parse) return;
+      if (file.substituted !== undefined)
+        this.source(
+          file.substituted,
+          sameScope ? scope : cloneScope(scope),
+          { ...ctx, depth: ctx.depth + 1, via: [...ctx.via, `<(${file.subPrograms.join(' | ')})`] },
+          undefined,
+        );
+      else if (!file.subPrograms.some((p) => NETWORK_FETCHERS.has(p))) {
+        inv.dynamic = true;
+        inv.note = `runs code produced by \`${file.subPrograms.join(' | ')}\``;
+      }
+      return;
+    }
     if (!file.resolved) {
       if (parse === true) {
         inv.dynamic = true;
@@ -2214,6 +2259,7 @@ class Analyzer {
       resolved: r.resolved,
       subPrograms: r.subPrograms,
       ...(r.envOnly ? { envOnly: true } : {}),
+      ...(r.substituted !== undefined ? { substituted: r.substituted } : {}),
     };
     if (r.choice) {
       const probe = this.evalParts(word.parts, src, scope, ctx, false, true);
@@ -2256,9 +2302,11 @@ class Analyzer {
     choice: boolean;
     /** Every variable with candidates used here has a complete list. */
     complete: boolean;
+    substituted: string | undefined;
   } {
     let alternatives = [''];
     let resolved = true;
+    let substituted: string | undefined;
     // Set when something other than an environment variable is unknown.
     let other = false;
     const unknown = (env: boolean) => {
@@ -2380,8 +2428,9 @@ class Analyzer {
           if (part.script) {
             for (const err of part.script.errors ?? []) this.errors.push(err.message);
             const only = part.script.commands.length === 1 ? part.script.commands[0] : undefined;
-            if (only && part.type === 'CommandExpansion') {
-              // `$(echo .env)` is just `.env`: evaluate simple output statically.
+            if (only) {
+              // `$(echo .env)` is just `.env`, and `<(echo 'rm -rf ~')` holds that
+              // text: evaluate simple output statically.
               staticOut = this.node(
                 only.command,
                 part.script.source ?? src,
@@ -2404,8 +2453,10 @@ class Analyzer {
               .map((i) => i.program)
               .filter(Boolean),
           );
-          if (part.type === 'ProcessSubstitution') append(['/dev/fd/63']);
-          else if (staticOut !== undefined) expanded(staticOut.replace(/\n+$/, ''));
+          if (part.type === 'ProcessSubstitution') {
+            append(['/dev/fd/63']);
+            if (parts.length === 1) substituted = staticOut;
+          } else if (staticOut !== undefined) expanded(staticOut.replace(/\n+$/, ''));
           else {
             unknown(false);
             append([part.text]);
@@ -2433,6 +2484,7 @@ class Analyzer {
       envOnly: !resolved && !other,
       choice,
       complete,
+      substituted,
     };
   }
 
@@ -2857,6 +2909,133 @@ function callArguments(code: string, names: readonly string[], needParen: boolea
     re.lastIndex = end + 1;
   }
   return found;
+}
+
+/** Calls that take the command as a list of words: Python's subprocess, Node's spawn. */
+const ARGV_CALLS = [
+  'subprocess.run',
+  'subprocess.call',
+  'subprocess.Popen',
+  'subprocess.check_output',
+  'subprocess.check_call',
+  'check_output',
+  'check_call',
+  'Popen',
+  'run',
+  'call',
+  'spawn',
+  'spawnSync',
+  'execFile',
+  'execFileSync',
+  'execa',
+  'execaSync',
+  'Bun.spawn',
+  'Bun.spawnSync',
+  'IO.popen',
+  'Process.spawn',
+];
+/** Ruby and Perl also take the words as separate arguments: `system("rm", "-rf", dir)`. */
+const VARARG_CALLS = [...ARGV_CALLS, 'system', 'exec'];
+
+const argPatterns = new Map<readonly string[], RegExp>();
+
+type CallArg =
+  | { kind: 'string'; value: string }
+  | { kind: 'list'; items: (string | undefined)[] }
+  | { kind: 'other' };
+
+/**
+ * The arguments of each call to one of `names`: plain strings, lists of plain strings
+ * (`undefined` for an element that is anything else), or something else. One pass over
+ * the code, like callArguments, so a hostile script cannot make it slow.
+ */
+function callArgs(code: string, names: readonly string[]): CallArg[][] {
+  // `x.run(...)` matches too: only list-shaped arguments ever become a command.
+  let re = argPatterns.get(names);
+  if (!re) {
+    const alternatives = names.map((n) => n.replace(/[.]/g, '\\.'));
+    re = new RegExp(`(?<![A-Za-z0-9_$])(?:${alternatives.join('|')})(?![A-Za-z0-9_$])`, 'g');
+    argPatterns.set(names, re);
+  }
+  const out: CallArg[][] = [];
+  const space = (i: number) => {
+    while (i < code.length && /\s/.test(code[i]!)) i++;
+    return i;
+  };
+  /** A quoted string at i, without interpolation. */
+  const str = (i: number): { value: string; end: number } | undefined => {
+    const quote = code[i];
+    if (quote !== '"' && quote !== "'" && quote !== '`') return undefined;
+    for (let j = i + 1; j < code.length && j - i < MAX_LITERAL; j++) {
+      const c = code[j];
+      if (c === '\\') j++;
+      else if (quote === '`' && c === '$' && code[j + 1] === '{') return undefined;
+      else if (c === quote) return { value: unquote(code.slice(i + 1, j)), end: j + 1 };
+      else if (c === '\n' && quote !== '`') return undefined;
+    }
+    return undefined;
+  };
+  /** Skips one expression up to a top-level `,` or the closing bracket. */
+  const skip = (i: number, close: string) => {
+    let depth = 0;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if (depth === 0 && (c === ',' || c === close)) return i;
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') depth--;
+      else if (c === '"' || c === "'" || c === '`') {
+        const s = str(i);
+        if (s) i = s.end - 1;
+      }
+    }
+    return i;
+  };
+  let scanned = 0;
+  re.lastIndex = 0;
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    let i = space(m.index + m[0].length);
+    if (code[i] !== '(') continue;
+    const start = i;
+    i = space(i + 1);
+    const args: CallArg[] = [];
+    while (i < code.length && code[i] !== ')') {
+      const s = str(i);
+      let next: number;
+      if (s && /^\s*[,)]/.test(code.slice(s.end, s.end + 40))) {
+        args.push({ kind: 'string', value: s.value });
+        next = s.end;
+      } else if (code[i] === '[') {
+        const items: (string | undefined)[] = [];
+        let j = space(i + 1);
+        while (j < code.length && code[j] !== ']') {
+          const e = str(j);
+          if (e && /^\s*[,\]]/.test(code.slice(e.end, e.end + 40))) {
+            items.push(e.value);
+            j = e.end;
+          } else {
+            items.push(undefined);
+            j = skip(j, ']');
+          }
+          j = space(j);
+          if (code[j] === ',') j = space(j + 1);
+          else break;
+        }
+        args.push({ kind: 'list', items });
+        next = code[j] === ']' ? j + 1 : j;
+      } else {
+        args.push({ kind: 'other' });
+        next = skip(i, ')');
+      }
+      i = space(next);
+      if (code[i] === ',') i = space(i + 1);
+      else break;
+    }
+    scanned += i - start;
+    if (scanned > MAX_INLINE_CODE * 4) break;
+    if (args.length > 0) out.push(args);
+    re.lastIndex = Math.max(i, m.index + m[0].length);
+  }
+  return out;
 }
 
 /** True for `"$@"` and `"${@}"`. */

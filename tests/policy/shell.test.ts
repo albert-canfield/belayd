@@ -157,3 +157,17 @@ describe('shell analysis', () => {
     expect(invs.some((i) => i.dynamic)).toBe(true);
   });
 });
+
+describe('list-form calls in code', () => {
+  it('stays fast on code built to make the call parser slow', () => {
+    const started = Date.now();
+    for (const code of [
+      'run('.repeat(50_000),
+      `subprocess.run([${'"a",'.repeat(40_000)}`,
+      `spawnSync("x", [${'['.repeat(30_000)}`,
+      '`${'.repeat(40_000),
+    ])
+      analyzeShell(`python3 -c '${code.replace(/'/g, '')}'`, { cwd: '/w', home: '/h' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
