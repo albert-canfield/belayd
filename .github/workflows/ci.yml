@@ -110,7 +110,9 @@ jobs:
         run: |
           export PATH="$HOME/node/bin:$PATH"
           rm -rf ~/belayd
-          git -c safe.directory='*' clone -q "$PWD" ~/belayd
+          # The checkout belongs to the Windows user, so git wants it marked as safe.
+          git config --global --add safe.directory '*'
+          git clone -q "$PWD" ~/belayd
           cd ~/belayd
           pnpm install --frozen-lockfile
           pnpm verify
