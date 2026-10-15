@@ -83,7 +83,7 @@ With the default `balanced` policy:
 | `rm -rf node_modules dist` | quiet | Inside the project, and undo can bring it back |
 <!-- catches:end -->
 
-Every row above is checked by the test suite, together with [300 more](tests/policy/corpus.yaml) for each of the three presets.
+Every row above is checked by the test suite, together with [over 400 more](tests/policy/corpus.yaml) for each of the three presets.
 
 ## Undo, step by step
 
@@ -183,7 +183,7 @@ belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 
 Hooks are the agents' own extension points, so belayd needs no wrapper around your agent and no daemon. Everything lives in `~/.belayd`: the audit database, the snapshots and pending approvals.
 
-A hook call takes about 60 to 90 ms on an M-series Mac, of which belayd adds 20 to 50 ms (the rest is Node starting, and the upper end includes the snapshot before a shell command). CI fails the build if that overhead goes above 100 ms.
+A hook call takes about 60 to 90 ms on an M-series Mac, of which belayd adds 20 to 60 ms (the rest is Node starting, and the upper end includes the snapshot before a shell command). CI fails the build if that overhead goes above 100 ms.
 
 ## How it compares
 
