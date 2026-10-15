@@ -128,6 +128,139 @@ const INTERPRETERS: Record<string, { inline: string[]; module?: string[] }> = {
   powershell: { inline: ['-c', '-command', '-encodedcommand', '-ec'] },
 };
 
+/**
+ * Tools that run a command inside a project environment: `uv run pytest`,
+ * `poetry run python build.py`, `bundle exec rake`, `doppler run -- npm start`. The
+ * command they start is checked like one typed directly.
+ *
+ * - `sub`: the subcommands that run a command (none: the tool itself does)
+ * - `value`: options that take a value, before or after the subcommand
+ * - `afterDashDash`: the command only comes after `--`
+ * - `string`: options whose value is a shell command line
+ * - `argvAfter`: options after which the rest of the words are the command
+ * - `skip`: positional words to skip first (`direnv exec DIR cmd`, `aws-vault exec PROFILE cmd`)
+ * - `chdir`: options that make the command run in another folder
+ * - `pyFiles`: a `.py` file as the command runs with Python (`uv run build.py`)
+ */
+interface EnvRunner {
+  sub?: string[];
+  value?: string[];
+  afterDashDash?: boolean;
+  string?: string[];
+  argvAfter?: string[];
+  skip?: number;
+  chdir?: string[];
+  pyFiles?: boolean;
+}
+
+const CONDA: EnvRunner = {
+  sub: ['run'],
+  value: ['-n', '--name', '-p', '--prefix', '--cwd'],
+  chdir: ['--cwd'],
+};
+const VERSION_MANAGER: EnvRunner = { sub: ['exec'] };
+const MISE: EnvRunner = {
+  sub: ['exec', 'x'],
+  value: ['-C', '--cd', '-j', '--jobs'],
+  string: ['-c', '--command'],
+  afterDashDash: true,
+  chdir: ['-C', '--cd'],
+};
+
+const ENV_RUNNERS: Record<string, EnvRunner> = {
+  uv: {
+    sub: ['run'],
+    value: [
+      '--with',
+      '-w',
+      '--with-editable',
+      '--with-requirements',
+      '--python',
+      '-p',
+      '--project',
+      '--directory',
+      '--package',
+      '--extra',
+      '--group',
+      '--only-group',
+      '--no-group',
+      '--env-file',
+      '--index',
+      '--default-index',
+      '--index-url',
+      '--extra-index-url',
+      '-i',
+      '--find-links',
+      '-f',
+      '--config-file',
+      '--cache-dir',
+      '--color',
+      '--python-preference',
+      '--index-strategy',
+      '--keyring-provider',
+      '--resolution',
+      '--prerelease',
+      '--exclude-newer',
+      '--link-mode',
+      '--reinstall-package',
+      '--upgrade-package',
+      '-P',
+      '--refresh-package',
+      '--no-binary-package',
+      '--no-build-package',
+      '--allow-insecure-host',
+      '--script',
+      '--gui-script',
+    ],
+    chdir: ['--directory'],
+    pyFiles: true,
+  },
+  poetry: { sub: ['run'], value: ['-C', '--directory', '-P', '--project'] },
+  pipenv: { sub: ['run'] },
+  pdm: { sub: ['run'], value: ['-p', '--project', '-G', '--group', '--venv'], pyFiles: true },
+  rye: { sub: ['run'], value: ['--pyproject'] },
+  hatch: { sub: ['run'], value: ['-e', '--env', '-i', '--include', '-x', '--exclude'] },
+  pixi: { sub: ['run', 'exec'], value: ['-e', '--environment', '--manifest-path', '-s', '--spec'] },
+  conda: CONDA,
+  mamba: CONDA,
+  micromamba: CONDA,
+  bundle: { sub: ['exec'], value: ['--gemfile'] },
+  devbox: { sub: ['run'], value: ['-c', '--config', '-e', '--env', '--env-file'] },
+  asdf: VERSION_MANAGER,
+  rbenv: VERSION_MANAGER,
+  pyenv: VERSION_MANAGER,
+  nodenv: VERSION_MANAGER,
+  goenv: VERSION_MANAGER,
+  mise: MISE,
+  rtx: MISE,
+  direnv: { sub: ['exec'], skip: 1 },
+  dotenv: { value: ['-e', '-v', '-c'], afterDashDash: false },
+  dotenvx: { sub: ['run'], value: ['-f', '--env-file', '-e', '--env', '--convention'] },
+  op: { sub: ['run'], value: ['--env-file', '--account'] },
+  doppler: {
+    sub: ['run'],
+    value: ['-p', '--project', '-c', '--config', '--token', '--mount', '--fallback'],
+    string: ['--command'],
+  },
+  infisical: {
+    sub: ['run'],
+    value: ['--env', '--path', '--projectId', '--token', '--watch-interval', '--domain'],
+    string: ['--command'],
+  },
+  'aws-vault': {
+    sub: ['exec'],
+    value: ['-d', '--duration', '-r', '--region', '-t', '--mfa-token'],
+    skip: 1,
+  },
+  chamber: { sub: ['exec'], afterDashDash: true },
+  'nix-shell': {
+    afterDashDash: true,
+    string: ['--run', '--command'],
+    value: ['-p', '--packages', '-A', '--attr', '-I', '--arg', '--argstr'],
+  },
+  nix: { sub: ['develop', 'shell'], argvAfter: ['-c', '--command'] },
+};
+
 /** Options that take a value, per wrapper, so we can find where the wrapped command starts. */
 const VALUE_OPTIONS: Record<string, Set<string>> = {
   sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-r', '-t', '-U', '-T', '--user', '--group']),
@@ -1048,6 +1181,10 @@ class Analyzer {
       return program;
     }
 
+    // Only `uv run`, not `uv venv`: other subcommands go on to the checks below.
+    const runner = ENV_RUNNERS[program];
+    if (runner && this.envRunner(program, runner, args, text, scope, stdin, nested)) return program;
+
     switch (program) {
       case 'env': {
         const rest: EvalWord[] = [];
@@ -1599,14 +1736,90 @@ class Analyzer {
     return true;
   }
 
+  /** `uv run cmd`, `poetry run cmd`, `doppler run -- cmd`: checks the command they start. */
+  private envRunner(
+    program: string,
+    spec: EnvRunner,
+    args: EvalWord[],
+    text: string,
+    scope: Scope,
+    stdin: StdinInfo | undefined,
+    nested: (via: string) => Ctx,
+  ): boolean {
+    const takesValue = new Set(spec.value ?? []);
+    let i = 0;
+    let via = program;
+    if (spec.sub) {
+      // Options before the subcommand (`poetry -C dir run`).
+      while (i < args.length && args[i]!.value.startsWith('-') && args[i]!.value !== '--') {
+        if (takesValue.has(args[i]!.value)) i++;
+        i++;
+      }
+      const sub = args[i]?.value;
+      if (sub === undefined || !spec.sub.includes(sub)) return false;
+      via = `${program} ${sub}`;
+      i++;
+    }
+    const rest = args.slice(i);
+    const inner = spec.chdir ? this.withChdir(rest, spec.chdir, scope) : scope;
+    const ctx = nested(via);
+
+    const dashDash = rest.findIndex((w) => w.value === '--');
+    let cmd: EvalWord[] | undefined;
+    for (let j = 0; j < rest.length; j++) {
+      const v = rest[j]!.value;
+      if (spec.string?.includes(v)) {
+        const code = rest[j + 1];
+        if (code) this.codeString([code], text, inner, ctx, stdin);
+        return true;
+      }
+      const eq = spec.string?.find((o) => v.startsWith(`${o}=`));
+      if (eq) {
+        this.codeString([{ ...rest[j]!, value: v.slice(eq.length + 1) }], text, inner, ctx, stdin);
+        return true;
+      }
+      if (spec.argvAfter?.includes(v)) {
+        cmd = rest.slice(j + 1);
+        break;
+      }
+      if (v === '--') {
+        cmd = rest.slice(j + 1);
+        break;
+      }
+      if (spec.argvAfter || spec.afterDashDash) {
+        if (takesValue.has(v)) j++;
+        continue;
+      }
+      if (!v.startsWith('-') || v === '-') {
+        cmd = rest.slice(j);
+        break;
+      }
+      if (takesValue.has(v)) j++;
+    }
+    if (!cmd && spec.afterDashDash === false && dashDash >= 0) cmd = rest.slice(dashDash + 1);
+    if (!cmd || cmd.length === 0) return true;
+    if (spec.skip) cmd = cmd.slice(spec.skip);
+    // `aws-vault exec PROFILE -- cmd`; python-dotenv's `dotenv run cmd`.
+    if (cmd[0]?.value === '--' || (program === 'dotenv' && cmd[0]?.value === 'run'))
+      cmd = cmd.slice(1);
+    if (cmd[0]?.value === '--') cmd = cmd.slice(1);
+    if (cmd.length === 0) return true;
+    // `hatch run test:pytest` runs pytest in the test environment.
+    if (program === 'hatch' && /^[\w.-]+:./.test(cmd[0]!.value))
+      cmd = [{ ...cmd[0]!, value: cmd[0]!.value.replace(/^[\w.-]+:/, '') }, ...cmd.slice(1)];
+    if (spec.pyFiles && /\.py$/.test(cmd[0]!.value)) cmd = [literal('python'), ...cmd];
+    this.invoke(cmd, text, inner, ctx, stdin, []);
+    return true;
+  }
+
   /** The scope for a command that a wrapper runs in another folder (`env -C dir`, `sudo -D dir`). */
   private withChdir(options: EvalWord[], flags: string[], scope: Scope): Scope {
     let dir: EvalWord | undefined;
     for (let i = 0; i < options.length; i++) {
       const v = options[i]!.value;
+      const long = [...flags, '--chdir'].find((f) => f.startsWith('--') && v.startsWith(`${f}=`));
       if (flags.includes(v)) dir = options[i + 1];
-      else if (v.startsWith('--chdir='))
-        dir = { ...options[i]!, value: v.slice('--chdir='.length) };
+      else if (long) dir = { ...options[i]!, value: v.slice(long.length + 1) };
     }
     if (!dir) return scope;
     const inner = cloneScope(scope);
