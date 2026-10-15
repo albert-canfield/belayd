@@ -9,6 +9,10 @@ export const MatchSchema = z
   .object({
     tool: list.optional(),
     command: list.optional(),
+    /** The whole command, word for word: no extra arguments. Rules from `belayd tune` use it. */
+    argv: list.optional(),
+    /** Every path the action touches must match one of these. Empty: it touches none. */
+    pathsOnly: z.array(pattern).max(500).optional(),
     args: z
       .object({ any: list.optional(), all: list.optional(), none: list.optional() })
       .strict()

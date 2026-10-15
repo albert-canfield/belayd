@@ -55,7 +55,23 @@ export function evaluate(
 interface SubjectResult {
   verdict: Verdict;
   finding?: Finding;
+  /** The rule that decided, if any. */
+  rule?: LayeredRule;
   summary: SubjectVerdict;
+}
+
+/** Each part of an action with the verdict and rule that decided it, for `belayd tune`. */
+export function judgeSubjects(
+  action: Action,
+  ctx: ActionContext,
+  policy: CompiledPolicy,
+  opts: EvaluateOptions,
+): { subject: Subject; verdict: Verdict; rule?: LayeredRule }[] {
+  const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
+  return buildSubjects(action, ctx).map((subject) => {
+    const r = decideSubject(subject, policy, env);
+    return { subject, verdict: r.verdict, ...(r.rule ? { rule: r.rule } : {}) };
+  });
 }
 
 function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): SubjectResult {
@@ -99,6 +115,7 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
   return {
     verdict: rule.decision,
     finding,
+    rule,
     summary: { label: s.label, verdict: rule.decision, ruleId: rule.id, reason, via: s.via },
   };
 }

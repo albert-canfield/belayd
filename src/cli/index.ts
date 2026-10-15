@@ -143,6 +143,24 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('tune')
+    .description('Turn questions you keep approving into allow rules')
+    .option('--min <n>', 'approvals needed before a suggestion', '3')
+    .option('--global', 'learn from every project and add the rules to your own policy')
+    .option('-y, --yes', 'add every suggestion without asking')
+    .option('--dry-run', 'only list the suggestions')
+    .addHelpText(
+      'after',
+      '\nA learned rule allows exactly the command or file you approved: the same words, the same paths.\n' +
+        'Questions belayd could not see into, questions from final rules, and commands that run\n' +
+        'project scripts or send data off the machine are never learned.',
+    )
+    .action(async (opts) => {
+      const { tune } = await import('./tune.js');
+      process.exitCode = await tune(opts);
+    });
+
+  program
     .command('approve')
     .description('Answer agents waiting for your approval (live console)')
     .argument('[id]', 'answer one request directly, with --allow or --deny')

@@ -328,6 +328,8 @@
     balanced: deny,
   }
 - { cmd: 'npx belayd-cli check "rm -rf ~"', balanced: pass }
+- { cmd: 'belayd tune --yes', balanced: deny }
+- { cmd: 'npx belayd-cli tune --yes --global', balanced: deny }
 - { cmd: 'belayd uninstall --yes', balanced: deny }
 - { cmd: 'cat ~/.belayd/ui-token', balanced: deny }
 - { cmd: 'echo "{}" > ~/.belayd/approvals/decided/mv7b-3e85.json', balanced: deny }

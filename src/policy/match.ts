@@ -50,6 +50,19 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
     if (s.kind !== 'shell' || !s.program) return no;
     if (!m.command.some((c) => commandMatches(c, s))) return no;
   }
+  if (m.argv) {
+    if (s.kind !== 'shell' || !s.program) return no;
+    const words = [s.program, ...s.argv.slice(1)];
+    if (words.length !== m.argv.length || !m.argv.every((g, i) => wildcard(g, words[i]!)))
+      return no;
+  }
+  if (m.pathsOnly) {
+    // An empty list is "touches no path", not "any path" as elsewhere.
+    if (
+      m.pathsOnly.length === 0 ? s.paths.length > 0 : !s.paths.every(pathMatcher(m.pathsOnly, env))
+    )
+      return no;
+  }
   if (m.args) {
     const has = (g: string) => s.args.some((a) => wildcard(g, a));
     if (m.args.any && !m.args.any.some(has)) return no;

@@ -78,6 +78,7 @@ rules:
         - belayd uninstall
         - belayd init
         - belayd trust
+        - belayd tune
         - belayd mcp wrap
         - belayd mcp unwrap
     decision: deny
