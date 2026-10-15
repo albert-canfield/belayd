@@ -1,16 +1,18 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-10-15)
+
+Fewer questions, more agents, and a test that runs every command for real.
 
 ### New
 
-- A GitHub Action (`uses: albert-canfield/belayd@v0.2.0`) for agents that run in CI: it installs belayd and its hooks, turns questions into a no (nobody is watching), and puts each session's timeline in the job summary. `fail-on-block: true` fails the job when belayd blocked something.
-- Windows through WSL: belayd inside a WSL distribution works as on Linux, and CI now runs the whole test suite in Ubuntu on WSL.
-- OpenCode support: `belayd init --agent opencode` installs a small plugin that checks every tool call before it runs, records what ran and snapshots it for undo. Tried live with OpenCode 1.19.0, directly and through `ollama launch opencode`.
-- A differential test (`pnpm differential`, in CI): about 650 commands run for real in a throwaway container, and the build fails if bash did something dangerous that belayd let through.
 - `belayd tune` turns questions you keep approving into allow rules. A learned rule allows that exact command or file and nothing else, steps aside when the agent changed a script or hook it would run, and is never learned from a final rule or from something belayd could not see into.
-- Two match fields: `argv` (the whole command, word for word) and `pathsOnly` (every path the action touches must be on the list).
 - Python, Node, Ruby and Perl scripts the agent wrote in the session are read before they run, like `python -c` code: `python3 build.py` with `os.system("rm -rf ~")` inside is blocked. Scripts that were already in your project are judged by their command line, as before. `tsx` and `ts-node` count as Node.
+- OpenCode support: `belayd init --agent opencode` installs a small plugin that checks every tool call before it runs, records what ran and snapshots it for undo. Tried live with OpenCode 1.19.0, directly and through `ollama launch opencode`.
+- A GitHub Action (`uses: albert-canfield/belayd@v0.2.0`) for agents that run in CI: it installs belayd and its hooks, turns questions into a no (nobody is watching), and puts each session's timeline in the job summary. `fail-on-block: true` fails the job when belayd blocked something.
+- A differential test (`pnpm differential`, in CI): about 650 commands run for real in a throwaway container, and the build fails if bash did something dangerous that belayd let through.
+- Windows through WSL: belayd inside a WSL distribution works as on Linux, and CI now runs the whole test suite in Ubuntu on WSL.
+- Two match fields: `argv` (the whole command, word for word) and `pathsOnly` (every path the action touches must be on the list).
 
 ### Fixes
 
