@@ -143,6 +143,24 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('scan')
+    .description('Show what belayd would have done with the tool calls your agents already made')
+    .option('--since <time>', 'how far back, for example 30d, 12h or 2w', '30d')
+    .option('--all', 'every project, not just this one')
+    .option('--preset <name>', 'judge with this preset instead of your policy')
+    .option('--examples <n>', 'examples to show per rule', '2')
+    .option('--json', 'print the counts as JSON')
+    .addHelpText(
+      'after',
+      "\nReads Claude Code's and Codex's session history on this machine (~/.claude/projects,\n" +
+        '~/.codex/sessions). Nothing is run and nothing is sent anywhere.',
+    )
+    .action(async (opts) => {
+      const { scan } = await import('./scan.js');
+      process.exitCode = await scan(opts);
+    });
+
+  program
     .command('tune')
     .description('Turn questions you keep approving into allow rules')
     .option('--min <n>', 'approvals needed before a suggestion', '3')
