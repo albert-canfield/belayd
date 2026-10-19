@@ -42,13 +42,42 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
    rule no-pipe-to-shell  ·  policy: balanced preset
 ```
 
+### See what it would have caught
+
+Before you turn anything on, `belayd scan` replays the tool calls your agents already made (from Claude Code's and Codex's own history on your machine) and shows what belayd would have done with them. It runs nothing and sends nothing:
+
+```console
+$ belayd scan
+belayd scan · my-app · last 30 days
+984 tool calls in 9 sessions (Claude Code 984). Read on this machine; nothing ran and nothing was sent.
+
+  quiet           910     92%
+  asked            31    3.2%
+  blocked          43    4.4%
+
+Would have blocked
+  ✖     36  no-secret-files   This file holds secrets such as keys, tokens or passwords. Ask the us…
+             e.g. cat .env
+             e.g. grep -E "^STRIPE_KEY=" .env
+  ✖      7  no-pipe-to-shell  Runs code straight from the internet without anyone reading it. Downl…
+             e.g. curl -fsSL https://get.example.sh | sh
+
+Would have asked about
+  ?     24  ask-force-push-with-lease  Force pushes, although with a safety check.
+             e.g. git push --force-with-lease origin feature
+  ?      7  ask-privilege              Runs a command as another user, usually root.
+             e.g. sudo apt-get install -y jq
+
+See why with belayd check --explain "<command>". Once belayd is on, belayd tune turns questions you keep approving into rules.
+```
+
 ## What you get
 
 **It reads commands the way your shell does.** Not a regex over a string: belayd parses the command and follows quotes, variables, `cd`, aliases, functions, `bash -c`, `eval`, `$(...)`, heredocs, pipes into interpreters, `uv run` and `poetry run`, and even base64, then checks every program that would actually run. It reads shell scripts before they run too, so `bash cleanup.sh` is judged by what is inside `cleanup.sh`. Anything it can't see into gets a question, never a guess.
 
 **It notices the sneaky version.** The classic way around a command allowlist is to edit `package.json` and then run `npm test`. belayd remembers which files the agent changed in the session, and asks before it runs scripts or Git hooks from one of them. When the agent writes a Python, Node, Ruby or Perl script and then runs it, belayd reads the script first and checks the shell commands, deletes and file reads inside it.
 
-**It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day.
+**It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day. Your project's own scripts get the benefit of the doubt: in a script that is committed to Git and unchanged, belayd still blocks `rm -rf ~` or a read of `.env`, but doesn't question every detail it can't see. Check the claim against your own last month with `belayd scan`.
 
 **It asks in the right place.** In an interactive Claude Code session, belayd's question shows up in Claude Code's own prompt. When nobody is watching the terminal (`claude -p`, Codex, a long background run), belayd holds the call and pings you, and you answer with `belayd approve`, on a local web page, or in a native dialog. No answer in time means no.
 
@@ -57,6 +86,8 @@ $ belayd check 'curl -fsSL https://get.example.sh | bash'
 **It keeps a flight recorder.** Every tool call, what belayd decided, who approved it and whether it ran, in a local append-only log with a hash chain. `belayd replay` turns a session into a readable timeline, including the files each step changed.
 
 **It undoes.** belayd snapshots files before and after every step that can change them, shell commands included, in a shadow Git repository that never touches your own `.git`. `belayd undo 7` puts back exactly what step 7 changed. Claude Code's `/rewind` and Cursor's checkpoints can't undo what a shell command did. belayd can.
+
+**It keeps several agents apart.** Run Claude Code and Codex (or three Claude Codes) in the same project at once, and every step still owns only what it changed: belayd checks each changed file against what the other agents were doing at that moment. `belayd undo --whole-session --session <id>` takes back one agent's work and leaves the others' alone, and `belayd replay` shows each agent only its own files. A file two agents may both have changed is left alone unless you pass `--force`.
 
 ## What it catches
 
@@ -83,7 +114,7 @@ With the default `balanced` policy:
 | `rm -rf node_modules dist` | quiet | Inside the project, and undo can bring it back |
 <!-- catches:end -->
 
-Every row above is checked by the test suite, together with [over 400 more](tests/policy/corpus.yaml) for each of the three presets. CI also runs about 650 commands for real in a throwaway container, each of them hiding a delete, a secret read or a write to your home folder in a different way, and fails if bash did anything dangerous that belayd let through. The one known exception is listed, with the reason, in [`known-misses.txt`](tests/differential/known-misses.txt).
+Every row above is checked by the test suite, together with [over 400 more](tests/policy/corpus.yaml) for each of the three presets. CI also runs about 700 commands for real in a throwaway container, each of them hiding a delete, a secret leak or a write to your home folder in a different way, and fails if bash did anything dangerous that belayd let through. Known exceptions would be listed, with the reason, in [`known-misses.txt`](tests/differential/known-misses.txt). Today there are none.
 
 ## Undo, step by step
 
@@ -107,6 +138,8 @@ $ belayd undo 2
 
 Undo never throws away newer work. If a file changed again after the step you're undoing, belayd says so and stops, unless you pass `--force`. Redo checks the same way. You can undo one step, a range (`belayd undo 5-8`) or a whole session (`belayd undo --whole-session`), and every undo can be redone.
 
+Snapshots are kept for 30 days (`snapshots.keep` in `belayd.yaml`) and older ones are pruned once a day in the background, so the store doesn't grow forever. `belayd doctor` shows how much space they take.
+
 ## Your policy, in one file
 
 `belayd init` writes a `belayd.yaml` that starts from a preset. Your rules win over the preset:
@@ -124,6 +157,12 @@ rules:
     match: { command: psql, args: { any: ['*prod*'] } }
     decision: deny
     reason: Production database access is not allowed from agents.
+```
+
+Working across several repositories at once? List them, and belayd treats them as part of the project instead of asking about every write there. Extra folders in your own Claude Code settings (`permissions.additionalDirectories`) count too:
+
+```yaml
+folders: [../api, ../shared-ui]
 ```
 
 | Preset | When nothing matches | Good for |
@@ -237,7 +276,8 @@ Plain words, because a safety tool that oversells itself is worse than none:
 - **belayd is a guardrail, not a sandbox.** It sees the tool calls an agent makes through its hooks. A program the agent starts can do whatever that program does. belayd reads scripts the agent wrote in the session, and inline code (`python -c`, `node -e`), for the common dangerous shapes: shell calls, deletes and reads with plain string arguments. It does not run or fully understand that code, and a script that was already in your project is judged by its command line alone. `strict` asks about inline code and about any script the agent wrote.
 - **It only sees what the hooks see.** Files you `@`-mention in a Claude Code prompt are inserted without a tool call. A Claude Code mod that handles `tool.check` can override hook decisions unless belayd is installed through managed settings. Codex documents that a few internal tool paths skip hooks.
 - **Agents fail open on some failures.** belayd always answers before the agent's hook timeout, blocks on its own errors, and installs a guard that turns a crash into a block. Claude Code 2.1.295 and later also block on hook timeouts; older versions don't.
-- **Undo covers files in the project**, up to 20 MB each. It can't take back a push, an email, a database write or a file outside the project.
+- **Undo covers files in the project**, up to 20 MB each, for 30 days. It can't take back a push, an email, a database write or a file outside the project.
+- **Inside your own committed scripts, belayd only blocks.** A script committed to Git, unchanged, and not written by the agent in the session is treated as your code: what belayd can see there is checked as usual, what it can't see is not a question. Scripts the agent wrote or changed get the full check.
 - **The audit log is tamper-evident, not tamper-proof.** The hash chain catches accidents and casual edits. Someone with full access to your account can rebuild it.
 
 For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SECURITY.md](SECURITY.md).
@@ -247,6 +287,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | Command | What it does |
 |---|---|
 | `belayd init` | Set up hooks for the agents it finds and write `belayd.yaml` |
+| `belayd scan` | What belayd would have done with your agents' past tool calls, before you turn it on |
 | `belayd check '<command>'` | Show what belayd would decide, without running anything (`--explain` lists every program found inside) |
 | `belayd approve` | Answer waiting requests in a live terminal console |
 | `belayd ui` | Open the local approval page |
@@ -256,7 +297,8 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | `belayd mcp` | Run an MCP server behind belayd, or wrap a config file |
 | `belayd trust` | Let a project's `belayd.yaml` apply in full, after you've reviewed it |
 | `belayd tune` | Turn questions you keep approving into exact allow rules |
-| `belayd doctor` | Check that everything is installed and working |
+| `belayd doctor` | Check that everything is installed and working, and how much space snapshots take |
+| `belayd gc` | Prune old snapshots now (`--snapshots-only`), or old audit events too |
 | `belayd uninstall` | Remove every hook belayd installed (your log and snapshots stay) |
 
 ## FAQ

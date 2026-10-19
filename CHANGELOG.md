@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Quieter on real work, and safe to undo when several agents share a project. No new misses in the differential test.
+
+### New
+
+- Several agents in one project: each step now owns only the files it changed. belayd checks every changed file against the other sessions' steps that ran at the same time, so `belayd undo` takes back one agent's work without touching another's, and `belayd replay` shows each agent only its own files. A file two agents may both have changed is left alone unless you pass `--force`. Before, undoing one agent either refused or, with `--force`, threw away the others' work.
+- `belayd scan` replays your agents' past tool calls (Claude Code's and Codex's own history on this machine) and shows what belayd would have blocked or asked about. Nothing runs and nothing is sent.
+- Your own committed scripts get the benefit of the doubt: in a script that is tracked by Git, unchanged, and not written by the agent this session, belayd still blocks what it can see, but what it cannot see is no longer a question. Checks on what the agent changed this session still apply inside them.
+- A script written and run in the same command (`cat > t.py <<'EOF' ... EOF && python t.py`) is read when its text is known exactly, instead of always asking. Python code on stdin (`python3 - <<'EOF'`) is read like `python -c`.
+- `folders:` in belayd.yaml (and the extra folders in your own Claude Code settings) count as part of the project.
+- Snapshots are pruned after 30 days (`snapshots.keep`), once a day in the background; `belayd gc --snapshots-only` does it now, and `belayd doctor` shows their size.
+
+### Fixes
+
+- Counting, naming or checksumming a secrets file is not a read of it: `grep -c`, `grep -l`, `grep -q`, `wc`, `cut -d= -f1`, `sed` or `awk` that keep only key names, `git check-ignore`. Reads that show values are still blocked.
+- `dirname`, `basename`, `pwd`, `${BASH_SOURCE[0]}` and `$(command -v x)` are followed in scripts, and a path built with `$(...)` is read like any other file. Since 0.2.0 such paths asked by mistake.
+- `python3 - "$file" <<'EOF'` was read as running `$file`, which could even block it as downloaded code.
+- The differential test now counts a secret read as dangerous when the value is shown or copied, not when the file is merely opened.
+
 ## 0.2.0 (2026-10-15)
 
 Fewer questions, more agents, and a test that runs every command for real.
