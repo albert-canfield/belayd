@@ -3,6 +3,7 @@ import pc from 'picocolors';
 import { findAgent } from '../agents/registry.js';
 import type { Dialect } from '../agents/types.js';
 import { evaluate } from '../policy/engine.js';
+import { actionLabel } from '../policy/label.js';
 import { loadPolicy, type CompiledPolicy } from '../policy/load.js';
 import type { AgentId, Verdict } from '../policy/types.js';
 import { readCalls, sessionFiles, sources } from '../scan/sources.js';
@@ -89,8 +90,10 @@ export async function scan(opts: ScanOptions): Promise<number> {
         if (!written) writes.set(sessionKey, (written = new Set()));
 
         let decision;
+        let label: string;
         try {
           const action = d.toAction(call.tool, call.input, call.cwd);
+          label = actionLabel(action, workspace);
           decision = evaluate(
             action,
             {
@@ -125,9 +128,8 @@ export async function scan(opts: ScanOptions): Promise<number> {
             examples: [],
           };
           r.count++;
-          const subject =
-            decision.findings.find((f) => f.ruleId === decision.ruleId)?.subject ?? '';
-          const shown = oneLine(redact(subject), 90);
+          // The whole command, as the person would recognise it.
+          const shown = oneLine(redact(label), 90);
           if (r.examples.length < max && shown && !r.examples.includes(shown))
             r.examples.push(shown);
           rules.set(decision.ruleId, r);
