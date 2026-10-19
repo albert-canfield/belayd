@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import picomatch from 'picomatch';
@@ -38,6 +39,11 @@ export interface Subject {
   inlineCode: boolean;
   remote: boolean;
   parseError: boolean;
+  /**
+   * Inside a committed, unchanged script the agent did not write: your own code. Only
+   * rules that block apply there; questions fall back to the policy's default.
+   */
+  trusted: boolean;
   via: string[];
   note: string | undefined;
 }
@@ -234,6 +240,43 @@ function mcpCommand(args: unknown): string | undefined {
 const SPECIAL_FILES = /^\/dev\/(null|zero|stdout|stderr|stdin|tty|fd\/\d+|random|urandom)$/;
 const GLOB_CHARS = /[*?[]/;
 
+const committed = new Map<string, boolean>();
+
+/**
+ * True when a file is tracked by Git with no change, staged or not, against HEAD. One
+ * `git status` per script and process; any doubt (no Git, not a repository, ignored,
+ * untracked, modified) is false.
+ */
+export function committedUnchanged(file: string): boolean {
+  let known = committed.get(file);
+  if (known !== undefined) return known;
+  try {
+    const out = execFileSync(
+      'git',
+      [
+        'status',
+        '--porcelain=v1',
+        '--ignored=matching',
+        '--untracked-files=all',
+        '--',
+        path.basename(file),
+      ],
+      {
+        cwd: path.dirname(file),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000,
+      },
+    );
+    // A committed symlink can point at a file that is not: only a regular file counts.
+    known = out.trim() === '' && fs.lstatSync(file).isFile();
+  } catch {
+    known = false;
+  }
+  committed.set(file, known);
+  return known;
+}
+
 export function buildSubjects(
   action: Action,
   ctx: ActionContext,
@@ -254,6 +297,8 @@ export function buildSubjects(
                 sessionWrites.has(p) || sessionWrites.has(canonicalPath(p)),
             }
           : {}),
+        trustedScript: (p: string) =>
+          !sessionWrites?.has(p) && !sessionWrites?.has(canonicalPath(p)) && committedUnchanged(p),
       });
       const subjects = analysis.invocations.map((inv) => fromInvocation(inv, ctx));
       if (analysis.errors.length > 0) {
@@ -521,11 +566,13 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
       .flatMap((d) =>
         d.endsWith('/') ? bothForms(d.slice(0, -1)).map((x) => `${x}/`) : bothForms(d),
       ),
-    dynamic: inv.dynamic,
-    unresolved,
+    // In your own committed script, what belayd cannot see is not a question.
+    dynamic: inv.trusted ? false : inv.dynamic,
+    unresolved: inv.trusted ? false : unresolved,
     inlineCode: inv.inlineCode,
     remote: inv.remote,
     parseError: false,
+    trusted: inv.trusted === true,
     via: inv.via,
     note: inv.note,
   };
@@ -599,6 +646,7 @@ function empty(kind: ActionKind, ctx: ActionContext, label: string): Subject {
     inlineCode: false,
     remote: false,
     parseError: false,
+    trusted: false,
     via: [],
     note: undefined,
   };

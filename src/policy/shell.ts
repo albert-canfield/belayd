@@ -60,6 +60,12 @@ export interface Invocation {
   scripts: string[];
   /** Human readable note for dynamic invocations. */
   note?: string;
+  /**
+   * Found inside a script that is committed to Git and unchanged, and that the agent did
+   * not write in this session: your own code. What belayd cannot see there does not
+   * count as a question; what it can see (`rm -rf ~`, `cat .env`) still does.
+   */
+  trusted?: boolean;
 }
 
 export interface ShellAnalysis {
@@ -85,6 +91,8 @@ export interface AnalyzeOptions {
    * Ruby or Perl script it wrote is read like inline code before it runs.
    */
   agentWrote?: (absPath: string) => boolean;
+  /** Whether a script is committed to Git, unchanged, and not written by the agent this session. */
+  trustedScript?: (absPath: string) => boolean;
 }
 
 const MAX_DEPTH = 6;
@@ -566,6 +574,8 @@ interface Ctx {
   scripts?: readonly string[];
   /** Functions being checked further up, so a recursive function is checked once. */
   functions?: readonly string[];
+  /** Inside a committed, unchanged script (see Invocation.trusted). */
+  trusted?: boolean;
 }
 
 interface StdinInfo {
@@ -645,7 +655,8 @@ class Analyzer {
       ast = parse(src);
       if (src.length > 512) this.parsed.set(src, ast);
     }
-    for (const err of ast.errors ?? []) this.errors.push(err.message);
+    // A parse error inside your own committed script is not a reason to ask about it.
+    if (!ctx.trusted) for (const err of ast.errors ?? []) this.errors.push(err.message);
     this.script(ast, ast.source ?? src, scope, ctx, stdin);
   }
 
@@ -2071,6 +2082,7 @@ class Analyzer {
       restore();
       return unseen('runs other scripts nested too deeply to check');
     }
+    const trusted = this.opts.trustedScript?.(abs) === true;
     this.source(
       script.text,
       target,
@@ -2079,6 +2091,7 @@ class Analyzer {
         depth: ctx.depth + 1,
         via: [...ctx.via, path.posix.basename(abs)],
         scripts: [...(ctx.scripts ?? []), key],
+        trusted,
       },
       undefined,
     );
@@ -2689,6 +2702,7 @@ class Analyzer {
       remote: ctx.remote,
       stdin: undefined,
       scripts: [],
+      ...(ctx.trusted ? { trusted: true } : {}),
     };
   }
 

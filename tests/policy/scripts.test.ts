@@ -302,3 +302,92 @@ describe('scripts the agent wrote in other languages are read before they run', 
     expect(await verdict('cd . && uv run python build.py', 'balanced', ['build.py'])).toBe('deny');
   });
 });
+
+describe('your own committed scripts', () => {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@e.x', ...args], {
+      cwd: ws,
+      stdio: 'ignore',
+    });
+  const commit = () => {
+    git('add', '-A');
+    git('commit', '-qm', 'scripts');
+  };
+  const uncertain =
+    '#!/usr/bin/env bash\nset -e\nhere="$(cd "$(dirname "$0")" && pwd)"\n. "$here/lib.sh"\nindex=$(mktemp -p "$TMPDIR_BASE")\ntrap \'rm -f "$index"\' EXIT\nrm -f "$index"\n';
+
+  beforeEach(() => {
+    git('init', '-q');
+    file('scripts/lib.sh', 'echo lib\n');
+  });
+
+  it('does not ask about what it cannot see inside a committed, unchanged script', async () => {
+    file('scripts/commit_own.sh', uncertain, 0o755);
+    commit();
+    expect(await verdict('scripts/commit_own.sh')).toBe('pass');
+    expect(await verdict('bash scripts/commit_own.sh')).toBe('pass');
+  });
+
+  it('still blocks what it can see inside one', async () => {
+    file('scripts/clean.sh', `${uncertain}rm -rf ~\n`, 0o755);
+    commit();
+    expect(await verdict('bash scripts/clean.sh')).toBe('deny');
+  });
+
+  it('asks again once the script has uncommitted changes, staged or not', async () => {
+    file('scripts/commit_own.sh', uncertain, 0o755);
+    commit();
+    file('scripts/commit_own.sh', `${uncertain}echo changed\n`, 0o755);
+    expect(await verdict('bash scripts/commit_own.sh')).toBe('ask');
+    git('add', '-A');
+    expect(await verdict('bash scripts/commit_own.sh')).toBe('ask');
+  });
+
+  it('asks about a script the agent wrote this session, even after it was committed', async () => {
+    file('scripts/commit_own.sh', uncertain, 0o755);
+    commit();
+    expect(await verdict('bash scripts/commit_own.sh', 'balanced', ['scripts/commit_own.sh'])).toBe(
+      'ask',
+    );
+  });
+
+  it('asks about an untracked or ignored script', async () => {
+    file('.gitignore', 'scripts/ignored.sh\n');
+    commit();
+    file('scripts/new.sh', uncertain, 0o755);
+    file('scripts/ignored.sh', uncertain, 0o755);
+    expect(await verdict('bash scripts/new.sh')).toBe('ask');
+    expect(await verdict('bash scripts/ignored.sh')).toBe('ask');
+  });
+
+  it('does not trust a committed symlink to a script outside Git', async () => {
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'belayd-outside-')));
+    fs.writeFileSync(path.join(outside, 'x.sh'), uncertain, { mode: 0o755 });
+    fs.mkdirSync(path.join(ws, 'scripts'), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'x.sh'), path.join(ws, 'scripts', 'link.sh'));
+    commit();
+    expect(await verdict('bash scripts/link.sh')).toBe('ask');
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('still asks when your script runs something the agent changed this session', async () => {
+    file('package.json', '{"scripts":{"test":"node t.js"}}');
+    file('scripts/check.sh', '#!/usr/bin/env bash\nnpm test\n', 0o755);
+    commit();
+    expect(await verdict('bash scripts/check.sh')).toBe('pass');
+    expect(await verdict('bash scripts/check.sh', 'balanced', ['package.json'])).toBe('ask');
+  });
+
+  it('only quiets questions: strict still asks inside your scripts', async () => {
+    file('scripts/commit_own.sh', uncertain, 0o755);
+    commit();
+    expect(await verdict('bash scripts/commit_own.sh', 'strict')).toBe('ask');
+  });
+
+  it('judges each script on its own: a committed script calling an untracked one', async () => {
+    file('scripts/run.sh', '#!/usr/bin/env bash\nbash scripts/new.sh\n', 0o755);
+    commit();
+    file('scripts/new.sh', uncertain, 0o755);
+    expect(await verdict('bash scripts/run.sh')).toBe('ask');
+  });
+});

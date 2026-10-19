@@ -92,7 +92,17 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
       ? extra
       : own;
 
-  if (!hit)
+  // Inside your own committed script, only blocks apply; a question there falls back to
+  // the default (quiet in balanced, a question in strict). Questions about what the agent
+  // changed this session (a script or package.json the script runs) still count: they are
+  // about the agent's work, not yours.
+  const ownCode =
+    s.trusted &&
+    hit !== undefined &&
+    hit.rule.decision !== 'deny' &&
+    hit.rule.match.changedRunner === undefined &&
+    hit.rule.match.changedScript === undefined;
+  if (!hit || ownCode)
     return {
       verdict: policy.default,
       summary: { label: s.label, verdict: policy.default, via: s.via },
