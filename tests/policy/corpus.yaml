@@ -677,3 +677,22 @@
 - { cmd: 'cd ~/.ssh && cat "$(pwd)/id_rsa"', balanced: deny, yolo: ask }
 - { cmd: 'f=a/b/c.txt; cat "$(dirname "$f")/../../.env"', balanced: deny, yolo: ask }
 - { cmd: 'echo "$(basename /srv/app/build.log .log)"', balanced: pass }
+
+# --- Looking at a secrets file without its values (19 Oct 2026) --------------------
+- { cmd: 'grep -c API_KEY .env', balanced: pass, strict: allow }
+- { cmd: 'grep -q "^NPM_TOKEN=" .env && echo set', balanced: pass, strict: allow }
+- { cmd: 'grep -l HTML2PDF .env .env.example', balanced: pass, strict: allow }
+- { cmd: 'cut -d= -f1 .env', balanced: pass }
+- { cmd: "sed 's/=.*//' .env", balanced: pass }
+- { cmd: "sed -E -n 's/=.*$//p' .env", balanced: pass }
+- { cmd: "awk -F= '{print $1}' .env", balanced: pass }
+- { cmd: 'git check-ignore -q .env', balanced: pass }
+- { cmd: 'wc -l .env', balanced: pass, strict: allow }
+- { cmd: 'test -f .env && echo yes', balanced: pass }
+- { cmd: 'grep -E "^NPM_TOKEN=" .env', balanced: deny, yolo: ask }
+- { cmd: 'grep -o "=.*" .env', balanced: deny, yolo: ask }
+- { cmd: 'cut -d= -f2 .env', balanced: deny, yolo: ask }
+- { cmd: "sed -i 's/=.*//' .env", balanced: ask }
+- { cmd: "awk -F= '{print $2}' .env", balanced: deny, yolo: ask }
+- { cmd: 'grep -c . .env; cat .env', balanced: deny, yolo: ask }
+- { cmd: 'sha256sum ~/.ssh/id_rsa', balanced: pass }

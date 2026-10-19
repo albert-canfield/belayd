@@ -148,6 +148,80 @@ const LISTS_ONLY = new Set([
   'cd',
   'pushd',
 ]);
+/** Programs that read a file but print only a count, a checksum or its type. */
+const NO_CONTENT = new Set([
+  'wc',
+  'file',
+  'test',
+  '[',
+  'md5',
+  'md5sum',
+  'sha1sum',
+  'sha256sum',
+  'sha512sum',
+  'shasum',
+  'cksum',
+  'b2sum',
+]);
+
+/**
+ * True when a command touches files without ever printing what they hold: counts and
+ * names (`grep -c`, `grep -l`, `grep -q`), the key names of a .env file (`cut -d= -f1`,
+ * a sed that drops everything after `=`, `awk -F= '{print $1}'`) or Git bookkeeping
+ * (`git check-ignore .env`). These are the careful ways to look at a secrets file.
+ */
+function showsNoContent(
+  program: string | undefined,
+  positionals: string[],
+  raw: string[],
+): boolean {
+  if (!program) return false;
+  if (NO_CONTENT.has(program)) return true;
+  const flags = raw.filter((a) => a.startsWith('-'));
+  const short = (letters: string) =>
+    flags.some((f) => /^-[A-Za-z]+$/.test(f) && [...f.slice(1)].some((c) => letters.includes(c)));
+  switch (program) {
+    case 'git':
+      return ['check-ignore', 'ls-files', 'check-attr'].includes(positionals[0] ?? '');
+    case 'grep':
+    case 'egrep':
+    case 'fgrep':
+    case 'rg':
+      // A count, the names of matching files, or only the exit status.
+      if (program === 'rg')
+        return flags.some((f) =>
+          /^(--count|--files-with-matches|--files-without-match|--quiet|-[cl]|-q)$/.test(f),
+        );
+      return (
+        short('clLq') ||
+        flags.some((f) => /^--(count|files-with-matches|files-without-match|quiet|silent)$/.test(f))
+      );
+    case 'cut': {
+      // `cut -d= -f1`: the names before `=`.
+      const d = raw.findIndex((a) => a === '-d' || a.startsWith('-d'));
+      const delim = d < 0 ? undefined : raw[d] === '-d' ? raw[d + 1] : raw[d]!.slice(2);
+      const f = raw.findIndex((a) => a === '-f' || a.startsWith('-f'));
+      const fields = f < 0 ? undefined : raw[f] === '-f' ? raw[f + 1] : raw[f]!.slice(2);
+      return delim === '=' && fields === '1';
+    }
+    case 'sed': {
+      // A sed that drops everything after `=` prints the names only; never in place.
+      if (flags.some((f) => f.startsWith('-i') || f === '--in-place')) return false;
+      const script = raw.find((a) => !a.startsWith('-'));
+      return script !== undefined && /^s([/|#])=\.\*\$?\1\1p?$/.test(script);
+    }
+    case 'awk':
+    case 'gawk':
+    case 'mawk': {
+      const fs = raw.findIndex((a) => a === '-F' || a.startsWith('-F'));
+      const sep = fs < 0 ? undefined : raw[fs] === '-F' ? raw[fs + 1] : raw[fs]!.slice(2);
+      const prog = raw.find((a, i) => !a.startsWith('-') && raw[i - 1] !== '-F');
+      return sep === '=' && prog !== undefined && /^\{\s*print\s+\$1\s*\}$/.test(prog);
+    }
+  }
+  return false;
+}
+
 /** Programs that can send a file's contents over the network. */
 const UPLOADERS = new Set(['curl', 'wget', 'http', 'https', 'xh']);
 /** Programs whose first positional is a mode or owner, and change the rest. */
@@ -513,7 +587,7 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
   }
 
   const reads = new Set(
-    LISTS_ONLY.has(program ?? '')
+    LISTS_ONLY.has(program ?? '') || showsNoContent(program, positionals, raw)
       ? []
       : [...paths].filter((p) => !writes.has(p) || program === 'mv'),
   );
