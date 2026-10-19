@@ -27,6 +27,8 @@ export interface Redirect {
   op: string;
   target: string;
   resolved: boolean;
+  /** The file descriptor written to, when given (`2> err.log`). */
+  fd?: number;
 }
 
 export interface Invocation {
@@ -539,6 +541,12 @@ interface Scope {
   downloads: Map<string, string>;
   /** Files written earlier in this same command (`echo ... > x.sh`). */
   written: Set<string>;
+  /**
+   * What some of those files hold, when it is known exactly (`cat > x.py <<'EOF'`), so a
+   * script written and run in one command can be read. Shared like `written`: two writes
+   * that may leave different text (branches, appends, copies) make it null, unknown.
+   */
+  contents: Map<string, string | null>;
   /** `$1`, `$2`, `"$@"` inside a script, when its arguments are known. */
   positional?: string[];
   /** Scripts that a trusted tool creates earlier in this command (`python -m venv`). */
@@ -596,6 +604,7 @@ export function analyzeShell(command: string, opts: AnalyzeOptions): ShellAnalys
     aliases: new Map(),
     downloads: new Map(),
     written: new Set(),
+    contents: new Map(),
     generated: new Set(),
     functions: new Map(),
     programs: new Map(),
@@ -873,7 +882,7 @@ class Analyzer {
       if (p.type === 'Assignment')
         prefixAssignments.push({ name: p.name, value: this.evalAssignment(p, src, scope, ctx) });
     }
-    const { redirects, inline } = this.redirects(cmd.redirects, src, scope, ctx);
+    const { redirects, inline, exact } = this.redirects(cmd.redirects, src, scope, ctx);
     for (const a of prefixAssignments) {
       if (!a.value.resolved) continue;
       if (a.name === 'PROMPT_COMMAND') {
@@ -930,7 +939,47 @@ class Analyzer {
     const tmpdirChanged =
       prefixAssignments.some((a) => a.name === 'TMPDIR') ||
       scope.vars.get('TMPDIR') !== this.opts.env?.TMPDIR;
-    return this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
+    const out = this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
+    this.recordContents(
+      program,
+      words,
+      redirects,
+      inline === undefined || exact ? out : undefined,
+      scope,
+    );
+    return out;
+  }
+
+  /** Remembers what a command wrote to files, when that is known exactly. */
+  private recordContents(
+    program: string,
+    words: EvalWord[],
+    redirects: Redirect[],
+    out: string | undefined,
+    scope: Scope,
+  ): void {
+    const set = (p: string, value: string | null) => {
+      const abs = resolveIn(scope.cwd, p, this.opts.home);
+      if (!abs) return;
+      const same = !scope.contents.has(abs) || scope.contents.get(abs) === value;
+      scope.contents.set(abs, same ? value : null);
+    };
+    for (const r of redirects) {
+      if (!r.op.includes('>') || !r.resolved) continue;
+      const stdout = (r.op === '>' || r.op === '>|') && (r.fd === undefined || r.fd === 1);
+      set(r.target, stdout && out !== undefined ? out : null);
+    }
+    if (program === 'tee') {
+      const args = words.slice(1);
+      const append = args.some((w) => w.value === '--append' || /^-[a-z]*a/.test(w.value));
+      for (const w of args)
+        if (w.resolved && !w.value.startsWith('-'))
+          set(w.value, !append && out !== undefined ? out : null);
+    }
+    if (['cp', 'mv', 'install', 'ln'].includes(program)) {
+      const args = words.slice(1).filter((w) => w.resolved && !w.value.startsWith('-'));
+      if (args.length > 1) set(args[args.length - 1]!.value, null);
+    }
   }
 
   /**
@@ -1535,12 +1584,19 @@ class Analyzer {
           inv.note = 'runs inline code too large for belayd to check';
         }
       } else if (!lower.some((a) => interp.module?.includes(a))) {
-        const script = args.find((w) => !w.value.startsWith('-'));
-        if (script) {
+        // `python3 - "$f" <<'EOF'`: `-` means the code comes from stdin, and what follows
+        // are its arguments, not a script.
+        const script = args.find((w) => w.value === '-' || !w.value.startsWith('-'));
+        if (script && script.value !== '-') {
           inv.codeFrom.push(...this.codeSources(script, scope));
           this.runScript(inv, script, scope, ctx, false, false);
           this.agentScript(program, inv, script, scope, ctx, text);
-        } else this.stdinCode(inv, stdin, scope, ctx, false);
+        } else {
+          this.stdinCode(inv, stdin, scope, ctx, false);
+          // Code given on stdin (`python3 - <<'EOF'`) is read like `python -c` code.
+          if (stdin?.text !== undefined && stdin.text.length <= MAX_INLINE_CODE)
+            this.scanCode(program, stdin.text, text, scope, nested(`${program} stdin`));
+        }
       }
     }
     return program;
@@ -1759,11 +1815,17 @@ class Analyzer {
     ctx: Ctx,
     text: string,
   ): void {
-    if (!file.resolved || !this.opts.agentWrote || !this.opts.readScript || this.exhausted) return;
+    if (!file.resolved || this.exhausted || ctx.depth >= MAX_DEPTH) return;
     const abs = resolveIn(scope.cwd, file.value, this.opts.home);
-    if (!abs || scope.written.has(abs) || !this.opts.agentWrote(abs)) return;
-    if (ctx.depth >= MAX_DEPTH) return;
-    const script = this.opts.readScript(abs);
+    if (!abs) return;
+    // Written earlier in this same command, with known text: read that.
+    const known = scope.contents.get(abs);
+    let script: { text: string; truncated: boolean } | undefined;
+    if (typeof known === 'string') script = { text: known, truncated: false };
+    else {
+      if (scope.written.has(abs) || !this.opts.agentWrote?.(abs) || !this.opts.readScript) return;
+      script = this.opts.readScript(abs);
+    }
     if (!script) return;
     if (script.truncated || script.text.length > MAX_INLINE_CODE) {
       inv.dynamic = true;
@@ -2026,23 +2088,31 @@ class Analyzer {
       return;
     }
     inv.scripts.push(abs);
-    if (scope.written.has(abs) && !scope.downloads.has(abs)) {
+    // Written earlier in this same command: readable only when exactly what was written
+    // is known (`cat > x.sh <<'EOF'`).
+    const writtenHere = scope.written.has(abs) && !scope.downloads.has(abs);
+    const recorded = writtenHere ? scope.contents.get(abs) : undefined;
+    const known = typeof recorded === 'string' ? recorded : undefined;
+    if (writtenHere && known === undefined) {
       inv.dynamic = true;
       inv.note = `runs ${file.value}, which this same command writes first, so belayd cannot read it in advance`;
       return;
     }
-    if (!parse || !this.opts.readScript || this.exhausted) return;
+    if (!parse || this.exhausted || (known === undefined && !this.opts.readScript)) return;
     const unseen = (why: string) => {
       inv.dynamic = true;
       inv.note = `runs ${file.value}, which ${why}`;
     };
     // With parallel tool calls, the agent may be writing this script right now. A script
     // that does not exist yet cannot be read, so it counts as code belayd cannot see.
-    if (this.opts.fileExists && !this.opts.fileExists(abs)) {
+    if (known === undefined && this.opts.fileExists && !this.opts.fileExists(abs)) {
       if (scope.generated.has(abs)) return; // `python -m venv .venv && source .venv/bin/activate`
       return unseen('does not exist yet, so belayd cannot read it first');
     }
-    const script = this.opts.readScript(abs);
+    const script =
+      known !== undefined
+        ? { text: known, truncated: known.length > MAX_SOURCE_CHARS }
+        : this.opts.readScript!(abs);
     if (!script) return unseen('belayd cannot read');
     const head = script.text.slice(0, 1024);
     // A text file without `#!` is run by the shell itself; a binary has NUL bytes early on.
@@ -2082,7 +2152,8 @@ class Analyzer {
       restore();
       return unseen('runs other scripts nested too deeply to check');
     }
-    const trusted = this.opts.trustedScript?.(abs) === true;
+    // A file this same command wrote is never "your committed script", whatever Git says.
+    const trusted = !scope.written.has(abs) && this.opts.trustedScript?.(abs) === true;
     this.source(
       script.text,
       target,
@@ -2215,12 +2286,15 @@ class Analyzer {
     src: string,
     scope: Scope,
     ctx: Ctx,
-  ): { redirects: Redirect[]; inline: string | undefined } {
+  ): { redirects: Redirect[]; inline: string | undefined; exact: boolean } {
     const redirects: Redirect[] = [];
     let inline: string | undefined;
+    // A heredoc with expansions in it is not known word for word.
+    let exact = true;
     for (const r of list) {
       if (r.type === 'HereDoc') {
         if (r.body.parts) this.evalParts(r.body.parts, src, scope, ctx, true);
+        if (r.body.parts && r.body.parts.length > 0) exact = false;
         inline ??= r.body.text;
       } else if (r.type === 'HereString') {
         if (r.target) inline ??= this.evalWord(r.target, src, scope, ctx).value + '\n';
@@ -2229,10 +2303,18 @@ class Analyzer {
         // `>&2` and `2>&1` duplicate file descriptors; they are not files.
         if ((r.operator === '>&' || r.operator === '<&') && /^(\d+|-)$/.test(target.value))
           continue;
-        redirects.push({ op: r.operator, target: target.value, resolved: target.resolved });
+        // `2> file` carries its descriptor as `{ type: 'FileDescriptor', value: 2 }`.
+        const descriptor = (r as { descriptor?: { value?: unknown } }).descriptor;
+        const fd = typeof descriptor?.value === 'number' ? descriptor.value : undefined;
+        redirects.push({
+          op: r.operator,
+          target: target.value,
+          resolved: target.resolved,
+          ...(fd !== undefined ? { fd } : {}),
+        });
       }
     }
-    return { redirects, inline };
+    return { redirects, inline, exact };
   }
 
   private evalAssignment(
@@ -2747,6 +2829,7 @@ function cloneScope(scope: Scope): Scope {
     aliases: new Map(scope.aliases),
     downloads: scope.downloads, // shared: a download in a subshell still lands on disk
     written: scope.written,
+    contents: scope.contents,
     generated: scope.generated,
     functions: new Map(scope.functions),
     programs: new Map(scope.programs),

@@ -75,9 +75,35 @@ describe('scripts are read before they run', () => {
     expect(await verdict('source not-yet.sh')).toBe('ask');
   });
 
-  it('asks about a script written earlier in the same command', async () => {
-    expect(await verdict(`echo 'rm -rf ~' > x.sh && bash x.sh`)).toBe('ask');
-    expect(await verdict(`printf 'ls' | tee run.sh && sh run.sh`)).toBe('ask');
+  it('reads a script written earlier in the same command when its text is known exactly', async () => {
+    expect(await verdict(`echo 'rm -rf ~' > x.sh && bash x.sh`)).toBe('deny');
+    expect(await verdict(`printf 'ls' | tee run.sh && sh run.sh`)).toBe('pass');
+    expect(await verdict("cat > t.sh <<'EOF'\nls -la\nEOF\nbash t.sh")).toBe('pass');
+    expect(
+      await verdict("cat > t.py <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF\npython3 t.py"),
+    ).toBe('deny');
+    expect(await verdict("cat > t.py <<'EOF'\nprint('hi')\nEOF\npython3 t.py")).toBe('pass');
+    expect(await verdict("cat > t.py <<'EOF'\nprint('hi')\nEOF\nuv run python t.py")).toBe('pass');
+  });
+
+  it('asks when what was written is not known exactly', async () => {
+    expect(await verdict(`echo "$X" > x.sh && bash x.sh`)).toBe('ask');
+    expect(await verdict('cat > x.sh <<EOF\nrm -rf $DIR\nEOF\nbash x.sh')).toBe('ask');
+    expect(await verdict(`echo ls > x.sh; echo 'rm -rf "$D"' >> x.sh; bash x.sh`)).toBe('ask');
+    expect(
+      await verdict(
+        `if [ -f a ]; then echo ls > x.sh; else echo 'rm -rf "$D"' > x.sh; fi; bash x.sh`,
+      ),
+    ).not.toBe('pass');
+    expect(await verdict(`echo ls 2> x.sh; bash x.sh`)).toBe('ask');
+    expect(await verdict(`cp other.sh x.sh && bash x.sh`)).toBe('ask');
+  });
+
+  it('reads Python code given on stdin', async () => {
+    expect(await verdict("python3 - <<'EOF'\nimport os\nos.system('rm -rf ~')\nEOF")).toBe('deny');
+    expect(await verdict('python3 - "$f" <<\'EOF\'\nimport sys\nprint(sys.argv)\nEOF')).toBe(
+      'pass',
+    );
   });
 });
 
@@ -382,6 +408,17 @@ describe('your own committed scripts', () => {
     file('scripts/commit_own.sh', uncertain, 0o755);
     commit();
     expect(await verdict('bash scripts/commit_own.sh', 'strict')).toBe('ask');
+  });
+
+  it('does not trust a committed script that the same command overwrites first', async () => {
+    file('scripts/check.sh', 'echo ok\n', 0o755);
+    commit();
+    expect(
+      await verdict('cat > scripts/check.sh <<\'EOF\'\nrm -f "$X"\nEOF\nbash scripts/check.sh'),
+    ).toBe('ask');
+    expect(await verdict(`echo 'rm -f "$X"' >> scripts/check.sh; bash scripts/check.sh`)).toBe(
+      'ask',
+    );
   });
 
   it('judges each script on its own: a committed script calling an untracked one', async () => {
