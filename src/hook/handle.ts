@@ -85,6 +85,7 @@ export async function handleToolHook(
       // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
       const written = buildSubjects(action, ctxBase).flatMap((s) => s.writes);
       snapshot = capture(stateDir, policy, action, ctxBase, {
+        predicted: [...written],
         onChanged: (paths) => written.push(...paths),
         deadline: started + (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000 - SAFETY_MARGIN_MS,
       });

@@ -8,15 +8,23 @@ export interface SnapRef {
   paths?: string[];
   /** Files too big to capture. Undo cannot restore them. */
   skipped?: string[];
+  /** After a step: the files its command says it writes (relative), for telling agents apart. */
+  writes?: string[];
 }
 
 export interface StepChanges {
   step: number;
+  session: string;
+  /** When the step started and ended, epoch ms. */
+  start: number;
+  end: number;
   label: string;
   tool: string | undefined;
   pre: SnapRef;
   post: SnapRef;
   changes: Change[];
+  /** Files another agent may also have changed while this step ran. */
+  shared?: { path: string; sessions: string[] }[];
 }
 
 export interface PlannedFile {
@@ -38,6 +46,8 @@ export interface UndoPlan {
   conflicts: { path: string; lastStep: number }[];
   /** Files already back to how they were. */
   unchanged: string[];
+  /** Files another agent may also have changed at the same time, left alone without --force. */
+  shared: { path: string; sessions: string[]; step: number }[];
 }
 
 export function parseSnapshot(value: string | undefined): SnapRef | undefined {
@@ -67,17 +77,95 @@ export function stepChanges(events: StoredEvent[], shadow: Shadow): StepChanges[
       continue; // snapshot objects missing, for example after the shadow repo was removed
     }
     if (changes.length > 0) {
-      out.push({ step: e.step, label: e.label ?? '', tool: e.tool, pre, post, changes });
+      out.push({
+        step: e.step,
+        session: e.session,
+        start: e.at,
+        end: posts.get(e.toolUseId)?.at ?? e.at,
+        label: e.label ?? '',
+        tool: e.tool,
+        pre,
+        post,
+        changes,
+      });
     }
   }
   return out;
 }
 
-export function planUndo(shadow: Shadow, all: StepChanges[], steps: Set<number>): UndoPlan {
+/**
+ * Several agents can work in one project at once. A step's before and after snapshots
+ * then also hold what the others wrote in between, so each changed file is checked
+ * against the other sessions' steps that ran at the same time:
+ *
+ * - nobody else changed it: it is this step's
+ * - this step's command says it writes the file and theirs does not: it is this step's
+ * - their command says so and this step's does not: it is theirs, and left out
+ * - otherwise both may have written it: it stays, marked shared, and undo leaves it
+ *   alone unless forced
+ */
+export function withoutOtherAgents(mine: StepChanges[], others: StepChanges[]): StepChanges[] {
+  return mine
+    .map((s) => {
+      const overlapping = others.filter(
+        (o) => o.session !== s.session && o.start <= s.end && o.end >= s.start,
+      );
+      if (overlapping.length === 0) return s;
+      const own = new Set(s.post.writes ?? []);
+      const changes: Change[] = [];
+      const shared: { path: string; sessions: string[] }[] = [];
+      for (const c of s.changes) {
+        const claimants = overlapping.filter((o) => o.changes.some((x) => x.path === c.path));
+        if (claimants.length === 0) {
+          changes.push(c);
+          continue;
+        }
+        const mineSaysSo = own.has(c.path);
+        const theirsSaysSo = claimants.some((o) => (o.post.writes ?? []).includes(c.path));
+        if (mineSaysSo && !theirsSaysSo) changes.push(c);
+        else if (!mineSaysSo && theirsSaysSo) continue;
+        else {
+          changes.push(c);
+          shared.push({ path: c.path, sessions: [...new Set(claimants.map((o) => o.session))] });
+        }
+      }
+      return { ...s, changes, ...(shared.length > 0 ? { shared } : {}) };
+    })
+    .filter((s) => s.changes.length > 0);
+}
+
+/** The steps of other sessions in the same project that ran during `mine`. */
+export function concurrentSteps(
+  workspaceEvents: StoredEvent[],
+  mine: StepChanges[],
+  shadow: Shadow,
+): StepChanges[] {
+  if (mine.length === 0) return [];
+  const session = mine[0]!.session;
+  const from = Math.min(...mine.map((s) => s.start));
+  const to = Math.max(...mine.map((s) => s.end));
+  const others = workspaceEvents.filter(
+    (e) => e.session !== session && e.at >= from - 3_600_000 && e.at <= to + 3_600_000,
+  );
+  return stepChanges(others, shadow);
+}
+
+export function planUndo(
+  shadow: Shadow,
+  all: StepChanges[],
+  steps: Set<number>,
+  opts: { includeShared?: boolean } = {},
+): UndoPlan {
   const chosen = all.filter((s) => steps.has(s.step)).sort((a, b) => a.step - b.step);
   const byPath = new Map<string, PlannedFile & { finalTree: string }>();
+  const shared: UndoPlan['shared'] = [];
   for (const s of chosen) {
     for (const c of s.changes) {
+      const other = s.shared?.find((x) => x.path === c.path);
+      if (other && !opts.includeShared) {
+        if (!shared.some((x) => x.path === c.path)) shared.push({ ...other, step: s.step });
+        continue;
+      }
       const existing = byPath.get(c.path);
       if (existing) {
         existing.finalTree = s.post.tree;
@@ -119,7 +207,13 @@ export function planUndo(shadow: Shadow, all: StepChanges[], steps: Set<number>)
       ...(f.removed !== undefined ? { removed: f.removed } : {}),
     });
   }
-  return { steps: chosen.map((s) => s.step), files, conflicts, unchanged };
+  return {
+    steps: chosen.map((s) => s.step),
+    files: files.filter((f) => !shared.some((x) => x.path === f.path)),
+    conflicts: conflicts.filter((c) => !shared.some((x) => x.path === c.path)),
+    unchanged,
+    shared,
+  };
 }
 
 /**
@@ -142,7 +236,7 @@ export function applyUndo(shadow: Shadow, plan: UndoPlan): { before: SnapRef; sk
  * file changed since the undo is a conflict, like a file changed after an undone step.
  */
 export function planRedo(shadow: Shadow, undone: SnapRef, files: string[]): UndoPlan {
-  const plan: UndoPlan = { steps: [], files: [], conflicts: [], unchanged: [] };
+  const plan: UndoPlan = { steps: [], files: [], conflicts: [], unchanged: [], shared: [] };
   for (const f of files) {
     const target = shadow.blobAt(undone.tree, f);
     const current = shadow.currentBlob(f);

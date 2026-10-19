@@ -3,7 +3,7 @@ import pc from 'picocolors';
 import { agentName } from '../agents/registry.js';
 import { AuditLog, type StoredEvent } from '../audit/db.js';
 import { Shadow, type Change } from '../snapshots/shadow.js';
-import { stepChanges } from '../snapshots/undo.js';
+import { concurrentSteps, stepChanges, withoutOtherAgents } from '../snapshots/undo.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
 interface Common {
@@ -125,7 +125,7 @@ export async function replay(id: string | undefined, opts: Common): Promise<numb
       console.log(JSON.stringify(events, null, 2));
       return 0;
     }
-    printReplay(events, fileChanges(events));
+    printReplay(events, fileChanges(events, db));
     return 0;
   } finally {
     db.close();
@@ -150,14 +150,17 @@ export async function gc(opts: { olderThan?: string }): Promise<number> {
 }
 
 /** Files each step changed, from its snapshots. Empty when snapshots are off or missing. */
-function fileChanges(events: StoredEvent[]): Map<number, Change[]> {
+function fileChanges(events: StoredEvent[], db: AuditLog): Map<number, Change[]> {
   const out = new Map<number, Change[]>();
   const workspace = events[0]?.workspace;
   if (!workspace) return out;
   try {
     const shadow = new Shadow(belaydHome(), workspace);
     if (!shadow.exists()) return out;
-    for (const s of stepChanges(events, shadow)) out.set(s.step, s.changes);
+    // With several agents in one project, each step shows only what it changed itself.
+    const own = stepChanges(events, shadow);
+    for (const s of withoutOtherAgents(own, concurrentSteps(db.events({ workspace }), own, shadow)))
+      out.set(s.step, s.changes);
   } catch {
     // replay still works without file details
   }

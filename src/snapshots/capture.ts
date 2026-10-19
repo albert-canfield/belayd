@@ -28,6 +28,8 @@ export function capture(
   ctx: ActionContext,
   opts: {
     onChanged?: (paths: string[]) => void;
+    /** After a step: the absolute paths its command says it writes, kept to tell agents apart. */
+    predicted?: string[];
     /** Epoch ms by which to give up on the snapshot, so the hook still answers in time. */
     deadline?: number;
   } = {},
@@ -44,7 +46,14 @@ export function capture(
     const { changed, ...snap } =
       scope.kind === 'all' ? shadow.snapshotAll() : shadow.snapshotPaths(scope.paths);
     if (changed && opts.onChanged) opts.onChanged(changed.map((p) => path.join(ctx.workspace, p)));
-    return JSON.stringify(snap);
+    const writes = [
+      ...new Set(
+        (opts.predicted ?? [])
+          .map((p) => path.relative(ctx.workspace, p))
+          .filter((r) => r && !r.startsWith('..') && !path.isAbsolute(r)),
+      ),
+    ];
+    return JSON.stringify(writes.length > 0 ? { ...snap, writes } : snap);
   } catch (err) {
     logError(belaydHome, `snapshot: ${(err as Error).message}`);
     return undefined;

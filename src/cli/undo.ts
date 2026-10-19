@@ -8,9 +8,12 @@ import {
   parseSnapshot,
   planRedo,
   planUndo,
+  concurrentSteps,
   stepChanges,
+  withoutOtherAgents,
   type UndoPlan,
 } from '../snapshots/undo.js';
+import { agentName } from '../agents/registry.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
 export interface UndoOptions {
@@ -46,7 +49,13 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
       console.log('No snapshots for this project, so there is nothing to undo.');
       return 0;
     }
-    const steps = stepChanges(events, shadow);
+    // Other agents may have worked in the same project at the same time: each step keeps
+    // only what it changed itself.
+    const own = stepChanges(events, shadow);
+    const steps = withoutOtherAgents(
+      own,
+      concurrentSteps(db.events({ workspace: sessionWorkspace }), own, shadow),
+    );
     if (steps.length === 0) {
       console.log(`No step in session ${short(session)} changed any files.`);
       return 0;
@@ -73,8 +82,18 @@ export async function undo(stepArg: string | undefined, opts: UndoOptions): Prom
       return 1;
     }
 
-    const plan = planUndo(shadow, steps, new Set(wanted));
+    const plan = planUndo(shadow, steps, new Set(wanted), { includeShared: opts.force === true });
     printPlan(plan, steps, session, sessionWorkspace);
+    for (const s of plan.shared) {
+      const who = s.sessions
+        .map((x) => `${agentName(x.split(':')[0] ?? x)} ${short(x)}`)
+        .join(', ');
+      console.log(
+        pc.yellow(
+          `  left alone  ${s.path}  ${pc.dim(`(${who} changed it at the same time as step ${s.step}; --force undoes it too)`)}`,
+        ),
+      );
+    }
 
     if (plan.files.length === 0) {
       console.log(pc.green('\nNothing to do: those files are already back to how they were.'));
