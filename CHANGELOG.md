@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-19)
 
 Quieter on real work, and safe to undo when several agents share a project. No new misses in the differential test.
 
@@ -19,6 +19,7 @@ Quieter on real work, and safe to undo when several agents share a project. No n
 - `dirname`, `basename`, `pwd`, `${BASH_SOURCE[0]}` and `$(command -v x)` are followed in scripts, and a path built with `$(...)` is read like any other file. Since 0.2.0 such paths asked by mistake.
 - `python3 - "$file" <<'EOF'` was read as running `$file`, which could even block it as downloaded code.
 - The differential test now counts a secret read as dangerous when the value is shown or copied, not when the file is merely opened.
+- Path rules are checked faster: plain paths and whole folders no longer go through regular expressions, which keeps the hook as fast as 0.2.0 with the longer list of protected agent settings.
 
 ## 0.2.0 (2026-10-15)
 

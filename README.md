@@ -226,7 +226,7 @@ belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 Coding agents run unattended in CI too, where nobody is watching the log. The belayd action sets up belayd and its hooks for the agents in the job, and when the job ends it puts what every agent did, and what belayd decided, in the job summary:
 
 ```yaml
-- uses: albert-canfield/belayd@v0.2.0
+- uses: albert-canfield/belayd@v0.3.0
   with:
     fail-on-block: true # fail the job if belayd blocked anything
 - run: claude -p "Fix the failing test in src/parser.ts"
