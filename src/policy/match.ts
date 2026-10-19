@@ -151,13 +151,58 @@ function buildPathMatcher(patterns: string[], env: MatchEnv): (p: string) => boo
   const expand = (p: string) => expandPlaceholders(p, vars);
   const pos = patterns.filter((p) => !p.startsWith('!')).flatMap(expand);
   const neg = patterns.filter((p) => p.startsWith('!')).flatMap((p) => expand(p.slice(1)));
-  const opts = { dot: true, nocase: CASE_INSENSITIVE_FS };
-  const isPos = pos.length > 0 ? picomatch(pos, opts) : () => true;
-  const isNeg = neg.length > 0 ? picomatch(neg, opts) : () => false;
+  const isPos = pos.length > 0 ? anyOf(pos) : () => true;
+  const isNeg = neg.length > 0 ? anyOf(neg) : () => false;
   return (p) => {
     const norm = toPosix(p);
     return isPos(norm) && !isNeg(norm);
   };
+}
+
+const fold = (s: string) => (CASE_INSENSITIVE_FS ? s.toLowerCase() : s);
+
+/**
+ * A matcher for a list of path patterns. Most patterns are plain paths (`{home}/.claude/
+ * settings.json`) or a folder and everything in it (`{workspace}/.codex/**`): those are a
+ * set lookup and a prefix check, and only real globs go to picomatch. Every write is
+ * checked against every write rule, so this is on the hot path. Same answers as picomatch
+ * with `dot` and the platform's case rule.
+ */
+export function anyOf(patterns: string[]): (p: string) => boolean {
+  const exact = new Set<string>();
+  const folders: string[] = [];
+  const globs: string[] = [];
+  for (const p of patterns) {
+    // Past picomatch's length limit it refuses the pattern; let it, so errors stay errors.
+    const plain = p.length <= 65_536 ? literalOf(p) : undefined;
+    if (plain !== undefined) exact.add(fold(plain));
+    else if (p.length <= 65_536 && p.endsWith('/**') && literalOf(p.slice(0, -3)) !== undefined)
+      folders.push(fold(literalOf(p.slice(0, -3))!));
+    else globs.push(p);
+  }
+  const glob =
+    globs.length > 0 ? picomatch(globs, { dot: true, nocase: CASE_INSENSITIVE_FS }) : undefined;
+  return (p) => {
+    if (p === '') return glob ? glob(p) : false;
+    const f = fold(p);
+    if (exact.has(f)) return true;
+    for (const d of folders) if (f === d || f.startsWith(`${d}/`)) return true;
+    return glob ? glob(p) : false;
+  };
+}
+
+/** The pattern as plain text when it has no wildcard or special character, else undefined. */
+function literalOf(p: string): string | undefined {
+  let out = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i]!;
+    if (c === '\\') {
+      if (i + 1 >= p.length) return undefined;
+      out += p[++i];
+    } else if ('*?[]{}()!+@'.includes(c)) return undefined;
+    else out += c;
+  }
+  return out;
 }
 
 function listMatcher(
