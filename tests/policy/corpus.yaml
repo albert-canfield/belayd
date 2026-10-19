@@ -667,3 +667,13 @@
 - { cmd: 'node -e ''cp.execFileSync("cat", [".env"])''', balanced: deny, yolo: ask }
 - { cmd: 'ruby -e ''system("rm", "-rf", "/")''', balanced: deny }
 - { cmd: 'perl -e ''system("rm", "-rf", $dir)''', balanced: ask }
+
+# --- Script idioms belayd can resolve (19 Oct 2026) ---------------------------------
+- { cmd: '"$(command -v python3)" -c "print(1)"', balanced: pass }
+- { cmd: 'PY=$(command -v python3); "$PY" -c "import os; os.system(''rm -rf ~'')"', balanced: deny }
+- { cmd: '$(which node) -e "require(''child_process'').execSync(''rm -rf ~'')"', balanced: deny }
+- { cmd: 'rm -rf "$(which node)"', balanced: ask }
+- { cmd: 'cd ~ && rm -rf "$(pwd)"', balanced: deny }
+- { cmd: 'cd ~/.ssh && cat "$(pwd)/id_rsa"', balanced: deny, yolo: ask }
+- { cmd: 'f=a/b/c.txt; cat "$(dirname "$f")/../../.env"', balanced: deny, yolo: ask }
+- { cmd: 'echo "$(basename /srv/app/build.log .log)"', balanced: pass }

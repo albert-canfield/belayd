@@ -428,3 +428,21 @@ describe('your own committed scripts', () => {
     expect(await verdict('bash scripts/run.sh')).toBe('ask');
   });
 });
+
+describe('script idioms', () => {
+  it('follows ${BASH_SOURCE[0]} and $0 to the files a script sources', async () => {
+    file('lib/x.sh', 'here="$(dirname "${BASH_SOURCE[0]}")"\n. "$here/inner.sh"\n');
+    file('lib/inner.sh', 'rm -rf ~\n');
+    expect(await verdict('bash lib/x.sh')).toBe('deny');
+    file('scripts/run.sh', 'cd "$(dirname "$0")/.."\n. scripts/inner.sh\n');
+    file('scripts/inner.sh', 'cat .env\n');
+    expect(await verdict('bash scripts/run.sh')).toBe('deny');
+  });
+
+  it('resolves BASH_SOURCE for sourced files and restores it afterwards', async () => {
+    file('a.sh', '. lib/b.sh\necho "$BASH_SOURCE"\n');
+    file('lib/b.sh', '. "$(dirname "${BASH_SOURCE[0]}")/c.sh"\n');
+    file('lib/c.sh', 'ls\n');
+    expect(await verdict('bash a.sh')).toBe('pass');
+  });
+});

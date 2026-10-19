@@ -939,7 +939,7 @@ class Analyzer {
     const tmpdirChanged =
       prefixAssignments.some((a) => a.name === 'TMPDIR') ||
       scope.vars.get('TMPDIR') !== this.opts.env?.TMPDIR;
-    const out = this.staticStdout(program, words, effectiveStdin, tmpdirChanged);
+    const out = this.staticStdout(program, words, effectiveStdin, tmpdirChanged, scope.cwd);
     this.recordContents(
       program,
       words,
@@ -2054,7 +2054,9 @@ class Analyzer {
     /** The script's own arguments, which `$1` and `"$@"` stand for inside it. */
     scriptArgs?: EvalWord[],
   ): void {
-    if (file.subPrograms.length > 0) {
+    // `<(cmd)` is a pipe, not a file. A path built with `$(...)` (`"$(dirname "$0")/x.sh"`)
+    // is an ordinary file once its value is known, and is read below like any other.
+    if (file.subPrograms.length > 0 && (!file.resolved || file.value.startsWith('/dev/fd/'))) {
       // `bash <(curl ...)` is judged by where the code comes from. `source <(echo 'rm
       // -rf ~')` holds code belayd can read; anything else it cannot see.
       if (!parse) return;
@@ -2137,11 +2139,17 @@ class Analyzer {
       else delete target.positional;
     }
     if (!sameScope) target.vars.set('0', file.value);
+    const callerSource = target.vars.get('BASH_SOURCE');
+    target.vars.set('BASH_SOURCE', file.value);
     // A script that runs itself with the same arguments is already being checked. With
     // other arguments it can do other things, so it is read again (up to the depth limit).
     const key = `${abs}\0${target.positional?.join('\0') ?? '\u0001'}`;
     const restore = () => {
-      if (!sameScope || !scriptArgs) return;
+      if (!sameScope) return;
+      // BASH_SOURCE names the sourced file only while it runs.
+      if (callerSource === undefined) target.vars.delete('BASH_SOURCE');
+      else target.vars.set('BASH_SOURCE', callerSource);
+      if (!scriptArgs) return;
       // `source x.sh a b` sets the arguments only while x.sh runs.
       if (callerArgs) target.positional = callerArgs;
       else delete target.positional;
@@ -2219,10 +2227,25 @@ class Analyzer {
     words: EvalWord[],
     stdin: StdinInfo | undefined,
     tmpdirChanged = false,
+    cwd?: string,
   ): string | undefined {
     const args = words.slice(1);
     if (!args.every((w) => w.resolved)) return undefined;
     switch (program) {
+      // `$(dirname "$0")`, `$(basename "$f" .txt)` and `$(pwd)` in scripts.
+      case 'dirname':
+        if (args.length === 0 || args.some((w) => w.value.startsWith('-'))) return undefined;
+        return args.map((w) => `${path.posix.dirname(w.value)}\n`).join('');
+      case 'basename': {
+        if (args.length === 0 || args.length > 2 || args.some((w) => w.value.startsWith('-')))
+          return undefined;
+        const base = path.posix.basename(args[0]!.value);
+        const suffix = args[1]?.value;
+        return `${suffix && base !== suffix && base.endsWith(suffix) ? base.slice(0, -suffix.length) : base}\n`;
+      }
+      case 'pwd':
+        if (cwd === undefined || args.some((w) => !/^-[LP]$/.test(w.value))) return undefined;
+        return `${cwd}\n`;
       case 'echo': {
         // Leading -n, -e and -E words are options (any number of them); other words
         // starting with `-` are printed. zsh ends options at a lone `-`, bash prints it.
@@ -2489,6 +2512,14 @@ class Analyzer {
           let v: string | string[] | undefined;
           if (!part.prefix && !part.index && !part.operation)
             v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
+          // `${BASH_SOURCE[0]}` is the script being read, like `$0`.
+          else if (
+            part.parameter === 'BASH_SOURCE' &&
+            !part.prefix &&
+            !part.operation &&
+            (part.index as { value?: string } | undefined)?.value === '0'
+          )
+            v = this.lookup('BASH_SOURCE', scope);
           else if (
             part.operation?.type === 'Default' &&
             (part.operation.operator === ':=' || part.operation.operator === '=')
@@ -2716,7 +2747,7 @@ class Analyzer {
       );
       if (value.exhaustive) scope.exhaustive.add(name);
     }
-    const program = value.resolved ? undefined : envProgram(value);
+    const program = value.resolved ? undefined : (envProgram(value) ?? lookedUpProgram(value));
     if (program) scope.programs.set(name, program);
     else scope.programs.delete(name);
   }
@@ -2725,7 +2756,9 @@ class Analyzer {
   private programOf(head: EvalWord, scope: Scope): string | undefined {
     if (head.resolved) return undefined;
     const ref = /^"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?$/.exec(head.text);
-    return envProgram(head) ?? (ref ? scope.programs.get(ref[1]!) : undefined);
+    return (
+      envProgram(head) ?? lookedUpProgram(head) ?? (ref ? scope.programs.get(ref[1]!) : undefined)
+    );
   }
 
   private knownUnknown(name: string, scope: Scope): boolean {
@@ -3292,6 +3325,19 @@ function getoptPositionals(args: EvalWord[], valueLetters: string): EvalWord[] {
  * The program a word names when it is unknown only because of environment variables,
  * like `$JAVA_HOME/bin/java`: the user's environment decides the folder, not the agent.
  */
+/**
+ * `"$(command -v python3)"` and `$(which node)` are the path of that program, wherever it
+ * is installed: the program is known even though the path is not. The word stays unknown,
+ * so `rm "$(which x)"` is still an unknown path.
+ */
+function lookedUpProgram(word: EvalWord): string | undefined {
+  const m =
+    /^"?(?:\$\(|`)\s*(?:command\s+-v|which|type\s+-[pP])\s+([A-Za-z0-9_.+-]+)\s*(?:\)|`)"?$/.exec(
+      word.text,
+    );
+  return m?.[1];
+}
+
 function envProgram(word: EvalWord): string | undefined {
   if (!word.envOnly) return undefined;
   const name = programName(word.value);
