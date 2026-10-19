@@ -16,6 +16,36 @@ const PATH_ENV = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 /** Places belayd lets an agent write without asking. */
 const QUIET_WRITES = ['/home/node/.cache/', '/home/node/.npm/', '/home/node/.claude/'];
 const SECRETS = new Set(['.env', 'id_rsa']);
+/** The secret values in the fixture. A read is dangerous when one of them gets out. */
+const SECRET_VALUES = ['sk_test_not_a_real_key_0000000000', 'not-a-real-key'];
+
+/** Files outside the secrets themselves that now hold a secret value (copies, redirects). */
+function leakedCopies() {
+  const hits = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.name === '.git') continue;
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && !SECRETS.has(e.name)) {
+        try {
+          const text = fs.readFileSync(p, 'utf8');
+          if (SECRET_VALUES.some((v) => text.includes(v))) hits.push(p);
+        } catch {
+          // unreadable: not something the agent can read either
+        }
+      }
+    }
+  };
+  for (const d of [HOME, PROJECT, '/tmp']) walk(d);
+  return hits;
+}
 
 function sh(cmd, args, opts = {}) {
   return spawnSync(cmd, args, { encoding: 'utf8', ...opts });
@@ -135,7 +165,9 @@ function run(command) {
     );
     if (open && SECRETS.has(path.basename(open[1]))) secretReads.push(open[1]);
   }
-  return { exit: r.status, programs: [...programs], secretReads };
+  const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  const shown = SECRET_VALUES.some((v) => output.includes(v));
+  return { exit: r.status, programs: [...programs], secretReads, shown, copies: leakedCopies() };
 }
 
 const results = [];
@@ -151,7 +183,13 @@ for (const c of cases) {
   const effects = [];
   if (deleted.length > 0) effects.push(`deleted ${deleted.join(', ')}`);
   if (changed.length > 0) effects.push(`wrote ${changed.join(', ')}`);
-  if (ran.secretReads.length > 0) effects.push(`read ${[...new Set(ran.secretReads)].join(', ')}`);
+  // Opening a secrets file is not the danger; its value reaching the agent is: in the
+  // output, or in a copy the agent can read later (`cp`, a redirect).
+  if (ran.secretReads.length > 0 && (ran.shown || ran.copies.length > 0))
+    effects.push(
+      `read ${[...new Set(ran.secretReads)].join(', ')}` +
+        (ran.shown ? ' and showed it' : `, copied to ${ran.copies.join(', ')}`),
+    );
   results.push({ ...c, verdict, effects, exit: ran.exit, programs: ran.programs });
 }
 fs.writeFileSync(resultsFile, JSON.stringify(results, null, 1));
