@@ -3,6 +3,7 @@ import pc from 'picocolors';
 import { agentName } from '../agents/registry.js';
 import { AuditLog, type StoredEvent } from '../audit/db.js';
 import { Shadow, type Change } from '../snapshots/shadow.js';
+import { pruneSnapshots } from '../snapshots/retention.js';
 import { concurrentSteps, stepChanges, withoutOtherAgents } from '../snapshots/undo.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
@@ -132,7 +133,11 @@ export async function replay(id: string | undefined, opts: Common): Promise<numb
   }
 }
 
-export async function gc(opts: { olderThan?: string }): Promise<number> {
+export async function gc(opts: {
+  olderThan?: string;
+  snapshotsOnly?: boolean;
+  quiet?: boolean;
+}): Promise<number> {
   const days = Number(/^(\d+)d?$/.exec(opts.olderThan ?? '30d')?.[1] ?? NaN);
   if (!Number.isFinite(days) || days < 1) {
     console.error('Use a number of days, for example: belayd gc --older-than 30d');
@@ -141,8 +146,18 @@ export async function gc(opts: { olderThan?: string }): Promise<number> {
   const db = await open();
   if (!db) return 0;
   try {
-    const removed = db.gc(Date.now() - days * 86_400_000);
-    console.log(`Removed ${removed} events older than ${days} days.`);
+    if (!opts.snapshotsOnly) {
+      const removed = db.gc(Date.now() - days * 86_400_000);
+      console.log(`Removed ${removed} events older than ${days} days.`);
+    }
+    const r = pruneSnapshots(belaydHome(), db, days * 86_400_000);
+    if (!opts.quiet)
+      console.log(
+        `Snapshots: ${mb(r.before)} before, ${mb(r.after)} now` +
+          (r.removed > 0
+            ? `; removed ${r.removed} old project ${r.removed === 1 ? 'store' : 'stores'}.`
+            : '.'),
+      );
     return 0;
   } finally {
     db.close();
@@ -252,4 +267,10 @@ function when(ms: number): string {
 function oneLine(s: string, n: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+function mb(bytes: number): string {
+  return bytes >= 1024 * 1024 * 1024
+    ? `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

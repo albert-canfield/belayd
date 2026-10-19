@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { record, sessionKey, summarizeInput } from '../audit/record.js';
+import { maybeStartGc } from '../snapshots/retention.js';
 import { addSessionWrites, finishCall, sessionWrites, startCall } from '../audit/session.js';
 import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
@@ -84,6 +86,16 @@ export async function handleToolHook(
       // What the step wrote: what its command says, and what the snapshot saw change,
       // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
       const written = buildSubjects(action, ctxBase).flatMap((s) => s.writes);
+      // Once a day, old snapshots are pruned in the background (snapshots.keep).
+      const bin = process.argv[1];
+      if (bin?.endsWith('bin.js'))
+        maybeStartGc(stateDir, policy.snapshots.keepDays, (args) =>
+          spawn(process.execPath, [bin, ...args], {
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env, ...deps.env },
+          }).unref(),
+        );
       snapshot = capture(stateDir, policy, action, ctxBase, {
         predicted: [...written],
         onChanged: (paths) => written.push(...paths),

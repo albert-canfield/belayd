@@ -291,6 +291,7 @@ export function compile(
     snapshots: {
       enabled: snapshots?.enabled ?? true,
       maxFileSize: toBytes(snapshots?.maxFileSize ?? '20MB'),
+      keepDays: Math.max(1, Number(/^(\d+)d$/.exec(snapshots?.keep ?? '30d')?.[1] ?? 30)),
     },
   };
 }

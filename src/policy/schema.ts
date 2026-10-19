@@ -73,6 +73,11 @@ export const PolicySchema = z
     snapshots: z
       .object({
         enabled: z.boolean().optional(),
+        /** How long snapshots are kept for undo, in days (`30d`). */
+        keep: z
+          .string()
+          .regex(/^\d+d$/, 'use a number of days, like 30d')
+          .optional(),
         maxFileSize: z
           .union([
             z.number().positive(),

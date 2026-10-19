@@ -445,6 +445,51 @@ export class Shadow {
     }
   }
 
+  /**
+   * Keeps the snapshots in `keep` and lets Git delete everything else. Objects younger
+   * than an hour are never deleted, so a snapshot a hook has just taken survives even
+   * before its audit event is written.
+   */
+  prune(keep: string[]): void {
+    this.locked(() => {
+      const wanted = new Set(keep.filter((t) => /^[0-9a-f]{40,64}$/.test(t)));
+      // Only objects that still exist can be kept.
+      const present = new Set(
+        this.git(
+          ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+          [...wanted].join('\n') + '\n',
+        )
+          .split('\n')
+          .filter((l) => l.endsWith(' tree'))
+          .map((l) => l.split(' ')[0]!),
+      );
+      const existing = this.git(['for-each-ref', '--format=%(refname)', 'refs/belayd-keep/'])
+        .split('\n')
+        .filter(Boolean);
+      const lines = [
+        ...existing
+          .filter((r) => !present.has(r.slice('refs/belayd-keep/'.length)))
+          .map((r) => `delete ${r}`),
+        ...[...present].map((t) => `update refs/belayd-keep/${t} ${t}`),
+      ];
+      if (lines.length > 0) this.git(['update-ref', '--stdin'], `${lines.join('\n')}\n`);
+      this.git([
+        '-c',
+        'gc.reflogExpire=now',
+        '-c',
+        'gc.reflogExpireUnreachable=now',
+        'gc',
+        '--quiet',
+        '--prune=1.hour.ago',
+      ]);
+    });
+  }
+
+  /** Bytes the shadow repository takes on disk. */
+  sizeBytes(): number {
+    return dirBytes(this.dir);
+  }
+
   emptyTree(): string {
     return EMPTY_TREE;
   }
@@ -507,6 +552,28 @@ function exists(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function dirBytes(dir: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) total += dirBytes(p);
+    else if (e.isFile()) {
+      try {
+        total += fs.statSync(p).size;
+      } catch {
+        // gone meanwhile
+      }
+    }
+  }
+  return total;
 }
 
 function staleLock(file: string): boolean {

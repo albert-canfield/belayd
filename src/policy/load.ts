@@ -40,7 +40,7 @@ export interface CompiledPolicy {
     port: number;
   };
   failMode: 'closed' | 'open';
-  snapshots: { enabled: boolean; maxFileSize: number };
+  snapshots: { enabled: boolean; maxFileSize: number; keepDays: number };
   /** False when a project belayd.yaml has not been reviewed with `belayd trust`. */
   trusted: boolean;
   /** More folders that count as part of the project, absolute. */
@@ -78,7 +78,7 @@ export function findPolicyFile(workspace: string, belaydHome: string): string | 
 }
 
 /** Bump when the shape of CompiledPolicy changes, so old cache entries are not reused. */
-const CACHE_FORMAT = 3;
+const CACHE_FORMAT = 4;
 const MAX_POLICY_BYTES = 1024 * 1024;
 
 /**

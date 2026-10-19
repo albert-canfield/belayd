@@ -4,7 +4,7 @@ import path from 'node:path';
 import pc from 'picocolors';
 import { listPending } from '../approval/store.js';
 import { tooBroad } from '../snapshots/capture.js';
-import { Shadow } from '../snapshots/shadow.js';
+import { dirBytes, Shadow } from '../snapshots/shadow.js';
 import { AuditLog } from '../audit/db.js';
 import { readUiState } from '../approval/ui-state.js';
 import { HOOK_TIMEOUT_SECONDS } from '../agents/claude-code/setup.js';
@@ -102,6 +102,18 @@ export async function doctor(cwd = process.cwd()): Promise<number> {
     }
   } else {
     line('ok', 'Audit log: empty so far');
+  }
+  // The snapshot store is pruned to snapshots.keep; this shows whether that keeps up.
+  const snapshotBytes = dirBytes(path.join(state, 'snapshots'));
+  if (snapshotBytes > 0) {
+    const size = `${(snapshotBytes / 1024 / 1024).toFixed(snapshotBytes > 100 * 1024 * 1024 ? 0 : 1)} MB`;
+    if (snapshotBytes > 2 * 1024 * 1024 * 1024)
+      line(
+        'warn',
+        `Snapshots take ${size}`,
+        'Prune them now with belayd gc --snapshots-only, or keep fewer days with snapshots.keep in belayd.yaml.',
+      );
+    else line('ok', `Snapshots: ${size} (older than snapshots.keep are pruned daily)`);
   }
   const errors = recentErrors(state);
   if (errors.length > 0)

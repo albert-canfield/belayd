@@ -125,8 +125,10 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command('gc')
-    .description('Delete audit events older than a number of days')
+    .description('Delete audit events and snapshots older than a number of days')
     .option('--older-than <days>', 'for example 30d', '30d')
+    .option('--snapshots-only', 'keep the audit log; only delete old snapshots')
+    .option('--quiet', 'print nothing')
     .action(async (opts) => {
       const { gc } = await import('./audit.js');
       process.exitCode = await gc(opts);
