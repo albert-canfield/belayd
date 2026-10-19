@@ -179,7 +179,7 @@ function placeholders(env: MatchEnv): Record<string, string[]> {
   ]);
   const both = (p: string) => [...new Set([toPosix(p), toPosix(canonicalPath(p))])];
   return {
-    workspace: both(env.ctx.workspace),
+    workspace: [env.ctx.workspace, ...(env.ctx.folders ?? [])].flatMap(both),
     cwd: both(env.ctx.cwd),
     home: both(env.ctx.home),
     tmp: [...tmp],

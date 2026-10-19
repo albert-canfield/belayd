@@ -56,6 +56,8 @@ export const PolicySchema = z
     extends: z.string().optional(),
     default: z.enum(['pass', 'ask', 'allow']).optional(),
     rules: z.array(RuleSchema).default([]),
+    /** More folders that belong to this work (sibling repositories), relative to this file. */
+    folders: z.array(pattern).max(100).optional(),
     disable: z.array(z.string()).default([]),
     approval: z
       .object({

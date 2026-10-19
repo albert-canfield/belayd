@@ -67,7 +67,14 @@ export async function handleToolHook(
         : finishCall(stateDir, session, input.tool, input.input);
     if (id) input.toolUseId = id;
   }
-  const ctxBase: ActionContext = { agent, cwd, workspace, home };
+  const folders = dialect.folders?.(deps.env) ?? [];
+  const ctxBase: ActionContext = {
+    agent,
+    cwd,
+    workspace,
+    home,
+    ...(folders.length > 0 ? { folders } : {}),
+  };
 
   if (input.phase === 'post' || input.phase === 'failed') {
     let snapshot: string | undefined;

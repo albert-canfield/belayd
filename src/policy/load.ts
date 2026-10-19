@@ -43,6 +43,8 @@ export interface CompiledPolicy {
   snapshots: { enabled: boolean; maxFileSize: number };
   /** False when a project belayd.yaml has not been reviewed with `belayd trust`. */
   trusted: boolean;
+  /** More folders that count as part of the project, absolute. */
+  folders: string[];
   /** Things the user should know, such as ignored parts of an untrusted file. */
   warnings: string[];
 }
@@ -76,7 +78,7 @@ export function findPolicyFile(workspace: string, belaydHome: string): string | 
 }
 
 /** Bump when the shape of CompiledPolicy changes, so old cache entries are not reused. */
-const CACHE_FORMAT = 2;
+const CACHE_FORMAT = 3;
 const MAX_POLICY_BYTES = 1024 * 1024;
 
 /**

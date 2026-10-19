@@ -29,7 +29,7 @@ export function evaluate(
   opts: EvaluateOptions,
 ): Decision {
   const subjects = buildSubjects(action, ctx, opts.sessionWrites);
-  const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
+  const env = createMatchEnv(withFolders(ctx, policy), opts.belaydHome, opts.sessionWrites);
   const results = subjects.map((s) => decideSubject(s, policy, env));
 
   if (results.length === 0) {
@@ -67,7 +67,7 @@ export function judgeSubjects(
   policy: CompiledPolicy,
   opts: EvaluateOptions,
 ): { subject: Subject; verdict: Verdict; rule?: LayeredRule }[] {
-  const env = createMatchEnv(ctx, opts.belaydHome, opts.sessionWrites);
+  const env = createMatchEnv(withFolders(ctx, policy), opts.belaydHome, opts.sessionWrites);
   return buildSubjects(action, ctx, opts.sessionWrites).map((subject) => {
     const r = decideSubject(subject, policy, env);
     return { subject, verdict: r.verdict, ...(r.rule ? { rule: r.rule } : {}) };
@@ -152,6 +152,12 @@ function strongest(
     }
   }
   return best;
+}
+
+/** The folders your policy names count as part of the project, with the agent's own. */
+function withFolders(ctx: ActionContext, policy: CompiledPolicy): ActionContext {
+  const folders = [...(ctx.folders ?? []), ...(policy.folders ?? [])];
+  return folders.length > 0 ? { ...ctx, folders } : ctx;
 }
 
 function describe(f: Finding, multiple: boolean): string {

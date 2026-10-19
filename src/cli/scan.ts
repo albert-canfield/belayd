@@ -93,7 +93,14 @@ export async function scan(opts: ScanOptions): Promise<number> {
           const action = d.toAction(call.tool, call.input, call.cwd);
           decision = evaluate(
             action,
-            { agent: call.agent, toolName: call.tool, cwd: call.cwd, workspace, home },
+            {
+              agent: call.agent,
+              toolName: call.tool,
+              cwd: call.cwd,
+              workspace,
+              home,
+              ...(d.folders ? { folders: d.folders(process.env) } : {}),
+            },
             await policy,
             { belaydHome: state, sessionWrites: written },
           );

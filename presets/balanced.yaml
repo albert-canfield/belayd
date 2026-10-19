@@ -221,7 +221,7 @@ rules:
         - '!{home}/.npm/**'
         - '!{home}/Library/Caches/**'
     decision: ask
-    reason: Changes files outside this project.
+    reason: Changes files outside this project. If that folder is part of this work, list it under folders in belayd.yaml.
 
   - id: ask-delete-unknown-paths
     match:

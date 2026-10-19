@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
@@ -51,7 +52,12 @@ export function compilePolicy(input: CompileInput): CompiledPolicy {
   const user = parsePolicy(input.file.text, file);
   const base = input.base ? parsePolicy(input.base.text, input.base.file) : undefined;
   if (!input.trusted) return compileUntrusted(user, file, base, input.base?.file);
-  if (!base || !input.base) return compile(user, file, user.extends ?? DEFAULT_PRESET);
+  if (!base || !input.base)
+    return compile(
+      { ...user, folders: absoluteFolders(user.folders, file) },
+      file,
+      user.extends ?? DEFAULT_PRESET,
+    );
 
   // A trusted project file builds on your own policy: your rules still apply inside the
   // project, and the project's settings win where both set one. A project rule with the
@@ -60,6 +66,10 @@ export function compilePolicy(input: CompileInput): CompiledPolicy {
   const merged: PolicyFile = {
     ...base,
     ...user,
+    folders: [
+      ...absoluteFolders(base.folders, input.base.file),
+      ...absoluteFolders(user.folders, file),
+    ],
     rules: [...base.rules.filter((r) => !ids.has(r.id)), ...user.rules],
     disable: [...new Set([...base.disable, ...user.disable])],
     approval: { ...base.approval, ...user.approval },
@@ -176,8 +186,11 @@ function compileUntrusted(
         .map((r) => ({ ...r, id: `project-${r.id}`, layer: 'project' })),
     },
     trusted: false,
+    // Folders widen what counts as the project, so only your own file can name them.
+    folders: absoluteFolders(base?.folders, baseFile),
     warnings: [
       `${file} is not trusted yet, so only its stricter rules apply.` +
+        (user.folders?.length ? ' Ignored: folders.' : '') +
         (ignored.length > 0 ? ` Ignored: ${ignored.join('; ')}.` : '') +
         ' Review it, then run: belayd trust',
     ],
@@ -273,12 +286,29 @@ export function compile(
     },
     failMode: failMode ?? 'closed',
     trusted: true,
+    folders: (user?.folders ?? []).filter((f) => path.isAbsolute(f)),
     warnings: [],
     snapshots: {
       enabled: snapshots?.enabled ?? true,
       maxFileSize: toBytes(snapshots?.maxFileSize ?? '20MB'),
     },
   };
+}
+
+/**
+ * Folders from a policy file as absolute paths, relative to that file. A folder that
+ * would make "the project" the whole disk or your home folder is left out.
+ */
+export function absoluteFolders(folders: string[] | undefined, file: string | undefined): string[] {
+  if (!folders || !file) return [];
+  const home = os.homedir();
+  return folders
+    .map((f) =>
+      f === '~' || f.startsWith('~/')
+        ? path.join(home, f.slice(1))
+        : path.resolve(path.dirname(file), f),
+    )
+    .filter((f) => f !== path.parse(f).root && f !== home && !home.startsWith(f + path.sep));
 }
 
 /** A preset and the presets it extends, base first. */

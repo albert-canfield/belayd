@@ -1,3 +1,6 @@
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 import { handleToolHook, type HandleDeps } from '../../hook/handle.js';
 import type { HookResult } from '../../hook/types.js';
 import type { Action, AgentId } from '../../policy/types.js';
@@ -41,6 +44,7 @@ export const claudeDialect: Dialect = {
     agent === 'copilot' && copilotHooksInstalled(findWorkspace(event.cwd ?? process.cwd()), env),
   toAction: (tool, input, cwd) => toAction(tool, asRecord(input), cwd),
   workspace: (env) => env.CLAUDE_PROJECT_DIR,
+  folders: (env) => claudeExtraFolders(env),
   // Claude Code shows its own prompt in attended sessions. `claude -p` and other
   // unattended runs set CLAUDE_CODE_SESSION_ATTENDED=0 and would auto-deny instead.
   // Cursor does not enforce "ask" from this hook at all, and Copilot CLI only does in
@@ -179,4 +183,36 @@ export function toAction(tool: string, input: Record<string, unknown>, cwd: stri
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool) ?? /^MCP:(.+?)(?::(.+))?$/.exec(tool);
   if (mcp) return { kind: 'mcp', server: mcp[1]!, tool: mcp[2] ?? mcp[1]!, args: input };
   return { kind: 'tool', name: tool, input };
+}
+
+/**
+ * The extra folders in your own Claude Code settings (`permissions.additionalDirectories`
+ * in ~/.claude/settings.json). A project's settings file is not read: a repository could
+ * otherwise widen what belayd treats as the project. Folders as broad as your home folder
+ * or the disk are left out.
+ */
+export function claudeExtraFolders(env: NodeJS.ProcessEnv): string[] {
+  const home = env.HOME || os.homedir();
+  const file = path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'settings.json');
+  let dirs: unknown;
+  try {
+    dirs = (
+      JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        permissions?: { additionalDirectories?: unknown };
+      }
+    ).permissions?.additionalDirectories;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(dirs)) return [];
+  return dirs
+    .filter((d): d is string => typeof d === 'string')
+    .map((d) => (d === '~' || d.startsWith('~/') ? path.join(home, d.slice(1)) : d))
+    .filter(
+      (d) =>
+        path.isAbsolute(d) &&
+        d !== path.parse(d).root &&
+        d !== home &&
+        !home.startsWith(d + path.sep),
+    );
 }

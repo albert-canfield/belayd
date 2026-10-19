@@ -44,6 +44,8 @@ export interface ActionContext {
   cwd: string;
   /** Repository root, used for "outside the workspace" rules. */
   workspace: string;
+  /** More folders that belong to this work: `folders:` in belayd.yaml, the agent's extra folders. */
+  folders?: string[];
   home: string;
 }
 

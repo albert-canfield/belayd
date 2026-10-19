@@ -39,6 +39,8 @@ export interface Dialect {
   toAction(tool: string, input: unknown, cwd: string): Action;
   /** The project root, when the agent tells us. */
   workspace?(env: NodeJS.ProcessEnv): string | undefined;
+  /** More folders the person gave the agent, from the person's own settings only. */
+  folders?(env: NodeJS.ProcessEnv): string[];
   /**
    * True for a call another adapter already checks natively (Copilot CLI also runs
    * Claude Code's hooks). belayd then answers nothing here, so it checks the call once.
