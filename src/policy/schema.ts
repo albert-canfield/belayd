@@ -32,6 +32,8 @@ export const MatchSchema = z
     changedScript: z.boolean().optional(),
     /** Starts a coding agent with its own safety switched off (`claude --dangerously-skip-permissions`). */
     agentSafetyOff: z.boolean().optional(),
+    /** Sets a Git option that runs a command or switches hooks off (`core.fsmonitor`, `-c core.hooksPath=`). */
+    gitRunsCode: z.boolean().optional(),
     /** Would overwrite, throw away, stash or commit another live agent's uncommitted work. */
     othersWork: z.boolean().optional(),
   })

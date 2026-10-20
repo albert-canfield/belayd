@@ -223,6 +223,52 @@ rules:
     decision: ask
     reason: Another agent that is still working in this project has changes that are not committed yet. Let that agent finish or commit first, or ask the user.
 
+  - id: ask-skip-git-hooks
+    match:
+      command: [git commit, git push, git merge, git am, git rebase, git cherry-pick, git revert]
+      args: { any: [--no-verify] }
+    decision: ask
+    reason: Skips the project's Git hooks, such as its pre-commit checks.
+
+  - id: ask-skip-git-hooks-commit
+    match:
+      command: git commit
+      args: { any: [-n] }
+    decision: ask
+    reason: Skips the project's Git hooks, such as its pre-commit checks.
+
+  - id: ask-git-config-runs-code
+    match: { gitRunsCode: true }
+    decision: ask
+    reason: Sets a Git option that runs a command, or switches the project's hooks off.
+
+  - id: ask-make-public
+    match:
+      command: [gh repo create, gh gist create, gh repo edit]
+      args: { any: [--public, public, --visibility=public] }
+    decision: ask
+    reason: Makes a repository or files public on GitHub, where anyone can read them.
+
+  # In `gh repo create`, -p is --template; in `gh gist create` it is --public.
+  - id: ask-make-public-gist
+    match:
+      command: gh gist create
+      args: { any: [-p] }
+    decision: ask
+    reason: Makes files public on GitHub, where anyone can read them.
+
+  - id: ask-files-that-run-code
+    match:
+      writes:
+        - '{workspace}/.github/workflows/**'
+        - '{workspace}/.gitlab-ci.yml'
+        - '{workspace}/.circleci/**'
+        - '{workspace}/.vscode/tasks.json'
+        - '{workspace}/.git/config'
+        - '{workspace}/.git/hooks/**'
+    decision: ask
+    reason: Changes a file that runs code by itself, in CI with the project's secrets or when the folder or Git is used.
+
   - id: ask-agent-plugin-install
     match:
       command:
@@ -411,6 +457,37 @@ rules:
         - docker volume prune
     decision: ask
     reason: Destroys infrastructure or stored data.
+
+  - id: ask-infra-auto-apply
+    match:
+      command: [terraform apply, tofu apply, pulumi up, pulumi destroy, cdk deploy]
+      args: { any: [-auto-approve, --auto-approve, -y, --yes, --skip-preview, never] }
+    decision: ask
+    reason: Changes live infrastructure without showing the plan to anyone first.
+
+  - id: ask-cloud-deletes
+    match:
+      command: [gcloud, az, aws, doctl]
+      args: { any: [delete, 'delete-*', 'terminate-*', 'remove-*', destroy] }
+    decision: ask
+    reason: Deletes cloud resources, which undo cannot bring back.
+
+  - id: ask-database-resets
+    match:
+      command:
+        - prisma migrate reset
+        - prisma db push
+        - rails db:drop
+        - rails db:reset
+        - rails db:schema:load
+        - rake db:drop
+        - rake db:reset
+        - supabase db reset
+        - drizzle-kit drop
+        - django-admin flush
+        - 'python* manage.py flush'
+    decision: ask
+    reason: Drops or resets a database. Check which database it points at first.
 
   - id: ask-database-drops
     match:
