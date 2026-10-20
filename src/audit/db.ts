@@ -158,9 +158,11 @@ export class AuditLog {
       const prevHash = last?.hash ?? this.anchor();
       let step: number;
       if (event.phase === 'pre') {
+        // Steps only grow, so the session's latest `pre` holds the highest one. Reading
+        // it walks back from the end of the session; MAX() would read the whole session.
         const row = this.db
           .prepare(
-            `SELECT COALESCE(MAX(step), 0) AS n FROM events WHERE session = ? AND phase = 'pre'`,
+            `SELECT COALESCE((SELECT step FROM events WHERE session = ? AND phase = 'pre' ORDER BY seq DESC LIMIT 1), 0) AS n`,
           )
           .get(event.session) as { n: number };
         step = row.n + 1;
