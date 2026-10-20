@@ -30,6 +30,8 @@ export const MatchSchema = z
     remote: z.boolean().optional(),
     changedRunner: z.boolean().optional(),
     changedScript: z.boolean().optional(),
+    /** Starts a coding agent with its own safety switched off (`claude --dangerously-skip-permissions`). */
+    agentSafetyOff: z.boolean().optional(),
   })
   .strict();
 

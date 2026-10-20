@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- An agent that starts another coding agent with its safety switched off now gets a question: `claude --dangerously-skip-permissions`, `codex --yolo` or `-s danger-full-access`, `gemini --yolo`, `copilot --allow-all-tools`, `opencode run --auto`, `cursor-agent --force`, `droid exec --auto high` and the like, also through `npx`, `ollama launch`, wrappers, variables and inline Python. The reason names the flag. Rule `ask-agent-without-safety`, match field `agentSafetyOff`.
+
 ## 0.3.0 (2026-10-19)
 
 Quieter on real work, and safe to undo when several agents share a project. No new misses in the differential test.

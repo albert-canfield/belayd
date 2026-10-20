@@ -210,6 +210,11 @@ rules:
     decision: ask
     reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
 
+  - id: ask-agent-without-safety
+    match: { agentSafetyOff: true }
+    decision: ask
+    reason: Starts another coding agent with its own safety checks switched off, so whatever that agent decides to do runs without anyone approving it. Ask the user first, or start it without that flag.
+
   - id: ask-write-outside-workspace
     match:
       writes:

@@ -506,7 +506,17 @@ const TMUX_DYNAMIC = new Set([
 
 const RUNNERS = new Set(['npx', 'pnpx', 'bunx', 'uvx']);
 /** Packages whose command has another name: `npx belayd-cli approve` runs `belayd approve`. */
-const PACKAGE_COMMANDS = new Map([['belayd-cli', 'belayd']]);
+const PACKAGE_COMMANDS = new Map([
+  ['belayd-cli', 'belayd'],
+  // Coding agents, so `npx @anthropic-ai/claude-code --dangerously-skip-permissions` is seen.
+  ['@anthropic-ai/claude-code', 'claude'],
+  ['@google/gemini-cli', 'gemini'],
+  ['@qwen-code/qwen-code', 'qwen'],
+  ['opencode-ai', 'opencode'],
+  ['@sourcegraph/amp', 'amp'],
+  ['@charmland/crush', 'crush'],
+  ['aider-chat', 'aider'],
+]);
 
 interface EvalWord {
   text: string;

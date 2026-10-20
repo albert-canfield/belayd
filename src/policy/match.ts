@@ -92,6 +92,10 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
     if (Boolean(hit) !== m.changedScript) return no;
     if (hit) return { matched: true, detail: hit };
   }
+  if (m.agentSafetyOff !== undefined) {
+    if (Boolean(s.safetyOff) !== m.agentSafetyOff) return no;
+    if (s.safetyOff) return { matched: true, detail: s.safetyOff };
+  }
   if (m.secrets !== undefined) {
     const found = s.outbound.length > 0 ? findSecrets(s.outbound.join('\n'), env.envValues()) : [];
     if (found.length > 0 !== m.secrets) return no;

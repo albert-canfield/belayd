@@ -6,6 +6,7 @@ import { canonicalPath } from '../util/paths.js';
 import { readRegularFile } from '../util/files.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
+import { safetyOff } from './unguarded.js';
 
 /**
  * A subject is one thing policy rules are matched against: a whole read, write or fetch,
@@ -44,6 +45,8 @@ export interface Subject {
    * rules that block apply there; questions fall back to the policy's default.
    */
   trusted: boolean;
+  /** A coding agent started with its own safety switched off, and the flag that does it. */
+  safetyOff: string | undefined;
   via: string[];
   note: string | undefined;
 }
@@ -647,6 +650,7 @@ function fromInvocation(inv: Invocation, ctx: ActionContext): Subject {
     remote: inv.remote,
     parseError: false,
     trusted: inv.trusted === true,
+    safetyOff: safetyOff(program, raw),
     via: inv.via,
     note: inv.note,
   };
@@ -721,6 +725,7 @@ function empty(kind: ActionKind, ctx: ActionContext, label: string): Subject {
     remote: false,
     parseError: false,
     trusted: false,
+    safetyOff: undefined,
     via: [],
     note: undefined,
   };
