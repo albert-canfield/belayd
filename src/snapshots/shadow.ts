@@ -184,9 +184,17 @@ export class Shadow {
       this.ensure();
       if (this.tooBig())
         throw new SnapshotError(`${this.workspace} has too many files to snapshot`);
-      const dirty = this.dirtyPaths();
+      const { paths: dirty, staged } = this.dirtyPaths();
       const last = this.lastTree();
-      if (dirty.length === 0 && last) return { tree: last };
+      // A file too big to capture never enters the index, so Git lists it every time.
+      // Unchanged since it was last left out, it is not news.
+      const known = this.readTooBig();
+      const changed = known.size > 0 ? dirty.filter((p) => !known.has(p, this.workspace)) : dirty;
+      if (changed.length === 0 && last) {
+        if (known.size > 0) this.writeTooBig(known.keep(dirty));
+        if (staged > HEAD_AFTER) this.moveHead(last);
+        return { tree: last };
+      }
       const maxFiles = this.opts.maxFiles ?? 100_000;
       if (!last && dirty.length > maxFiles) {
         fs.writeFileSync(path.join(this.dir, 'belayd-too-big'), String(dirty.length));
@@ -194,10 +202,13 @@ export class Shadow {
           `${this.workspace} has ${dirty.length} files, more than the ${maxFiles} belayd snapshots. Undo is off for it.`,
         );
       }
-      const { kept, skipped } = this.filterBig(dirty);
-      if (kept.length > 0) this.addPaths(kept);
+      const { kept, skipped } = this.filterBig(changed);
+      if (kept.length > 0) this.addPaths(kept, { listedByStatus: true });
       const tree = this.writeTree();
-      return { tree, changed: dirty, ...(skipped.length > 0 ? { skipped } : {}) };
+      if (known.size > 0 || skipped.length > 0)
+        this.writeTooBig(known.keep(dirty).add(skipped, this.workspace));
+      if (staged + kept.length > HEAD_AFTER) this.moveHead(tree);
+      return { tree, changed, ...(skipped.length > 0 ? { skipped } : {}) };
     });
   }
 
@@ -287,16 +298,25 @@ export class Shadow {
    * True when a folder on the way to `file` is a symlink. Git refuses such paths, and
    * belayd must never write or delete through one: it could lead out of the project.
    */
-  beyondSymlink(file: string): boolean {
+  beyondSymlink(file: string, seen?: Map<string, boolean | undefined>): boolean {
     const parts = file.split('/').slice(0, -1);
     let dir = this.workspace;
     for (const part of parts) {
       dir = path.join(dir, part);
-      try {
-        if (fs.lstatSync(dir).isSymbolicLink()) return true;
-      } catch {
-        return false; // missing: nothing to follow
+      // `seen` remembers folders across many paths of one snapshot: true is a symlink,
+      // undefined is missing. Restores never pass it, they check right before acting.
+      let link: boolean | undefined;
+      if (seen?.has(dir)) link = seen.get(dir);
+      else {
+        try {
+          link = fs.lstatSync(dir).isSymbolicLink();
+        } catch {
+          link = undefined;
+        }
+        seen?.set(dir, link);
       }
+      if (link === undefined) return false; // missing: nothing to follow
+      if (link) return true;
     }
     return false;
   }
@@ -370,25 +390,58 @@ export class Shadow {
     return rel.split(path.sep).join('/');
   }
 
-  private dirtyPaths(): string[] {
-    const out = this.git([
-      'status',
-      '--porcelain=v2',
-      '-z',
-      '--untracked-files=all',
-      '--no-renames',
-    ]);
+  /**
+   * The paths whose work tree differs from our index, and how many index entries differ
+   * from HEAD (status lists each of those too, which only costs time).
+   */
+  private dirtyPaths(): { paths: string[]; staged: number } {
+    // Only ever called under belayd's own lock, so status may save what it learned
+    // into our index (refreshed file stats, the untracked cache). Without that, every
+    // status rescans every folder and rehashes every touched file, every time.
+    const out = this.git(
+      ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames'],
+      undefined,
+      { GIT_OPTIONAL_LOCKS: '1' },
+    );
     const paths: string[] = [];
+    let staged = 0;
     for (const entry of out.split('\0')) {
       if (entry.startsWith('? ')) paths.push(entry.slice(2));
       else if (entry.startsWith('1 ')) {
-        // "1 XY sub mH mI mW hH hI path": Y is the work tree compared with our index.
-        const fields = entry.split(' ');
-        if (fields[1]?.[1] !== '.') paths.push(fields.slice(8).join(' '));
+        // "1 XY sub mH mI mW hH hI path": X is our index compared with HEAD, Y is the
+        // work tree compared with our index.
+        if (entry[2] !== '.') staged++;
+        if (entry[3] !== '.') paths.push(entry.split(' ').slice(8).join(' '));
       }
     }
     const own = this.ownData();
-    return own ? paths.filter((p) => p !== own && !p.startsWith(`${own}/`)) : paths;
+    return {
+      paths: own ? paths.filter((p) => p !== own && !p.startsWith(`${own}/`)) : paths,
+      staged,
+    };
+  }
+
+  /** The tree HEAD points at, or undefined while HEAD has no commit. */
+  private headTree(): string | undefined {
+    try {
+      return this.git(['rev-parse', '--verify', '-q', 'HEAD^{tree}']).trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Points HEAD at a commit of `tree`. Status compares the index with HEAD as well and
+   * lists every difference, so without this it lists every file of a big project on
+   * every call. Only an optimization: failures are ignored.
+   */
+  private moveHead(tree: string): void {
+    try {
+      const commit = this.git(['commit-tree', '--no-gpg-sign', '-m', 'belayd', tree]).trim();
+      this.git(['update-ref', 'HEAD', commit]);
+    } catch {
+      // status just stays slower
+    }
   }
 
   private filterBig(paths: string[]): { kept: string[]; skipped: string[] } {
@@ -411,14 +464,39 @@ export class Shadow {
   }
 
   /** Records the current state of `paths`: present files are added, missing ones removed. */
-  private addPaths(paths: string[]): void {
+  private addPaths(paths: string[], opts: { listedByStatus?: boolean } = {}): void {
     // A file reached through a symlinked folder is not in the project any more.
+    const links = new Map<string, boolean | undefined>();
     const present = paths.filter(
-      (p) => !this.beyondSymlink(p) && exists(path.join(this.workspace, p)),
+      (p) => !this.beyondSymlink(p, links) && exists(path.join(this.workspace, p)),
     );
     const presentSet = new Set(present);
     const missing = paths.filter((p) => !presentSet.has(p));
-    if (present.length > 0) {
+    if (present.length >= BULK_FILES) {
+      // Many files at once (a first snapshot, a build, a checkout): written into one pack
+      // instead of a file per object, several times faster and smaller on disk.
+      const bulk = ['-c', 'core.bigFileThreshold=1'];
+      let rest = present;
+      if (opts.listedByStatus) {
+        // `add` matches every path against every other one, which takes minutes for tens
+        // of thousands. Status already applied the ignore rules to these, so the plain
+        // index update stores exactly the same. Nested repositories (listed as `dir/`)
+        // still go through `add`, which knows them. --replace settles a file that took a
+        // folder's place (or the reverse) the way `add` does.
+        rest = present.filter((p) => p.endsWith('/'));
+        const files = present.filter((p) => !p.endsWith('/'));
+        if (files.length > 0)
+          this.git(
+            [...bulk, 'update-index', '--add', '--remove', '--replace', '-z', '--stdin'],
+            files.join('\0'),
+          );
+      }
+      if (rest.length > 0)
+        this.git(
+          [...bulk, 'add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'],
+          rest.join('\0'),
+        );
+    } else if (present.length > 0) {
       this.git(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], present.join('\0'));
     }
     if (missing.length > 0) {
@@ -435,6 +513,22 @@ export class Shadow {
 
   tooBig(): boolean {
     return fs.existsSync(path.join(this.dir, 'belayd-too-big'));
+  }
+
+  private readTooBig(): TooBigFiles {
+    try {
+      const text = fs.readFileSync(path.join(this.dir, TOO_BIG_FILES), 'utf8');
+      return new TooBigFiles(JSON.parse(text) as Record<string, string>);
+    } catch {
+      return new TooBigFiles({});
+    }
+  }
+
+  private writeTooBig(files: TooBigFiles): void {
+    if (!files.changed) return;
+    const file = path.join(this.dir, TOO_BIG_FILES);
+    if (files.size === 0) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, JSON.stringify(files.entries));
   }
 
   private lastTree(): string | undefined {
@@ -473,6 +567,11 @@ export class Shadow {
         ...[...present].map((t) => `update refs/belayd-keep/${t} ${t}`),
       ];
       if (lines.length > 0) this.git(['update-ref', '--stdin'], `${lines.join('\n')}\n`);
+      // HEAD (see moveHead) keeps its snapshot alive: bring it up to the latest one, which
+      // the index holds on to anyway, so an old one can go.
+      const last = this.lastTree();
+      const head = last ? this.headTree() : undefined;
+      if (last && head && head !== last) this.moveHead(last);
       this.git([
         '-c',
         'gc.reflogExpire=now',
@@ -494,10 +593,10 @@ export class Shadow {
     return EMPTY_TREE;
   }
 
-  private git(args: string[], input?: string): string {
+  private git(args: string[], input?: string, env?: NodeJS.ProcessEnv): string {
     try {
       return execFileSync('git', args, {
-        env: this.env,
+        env: env ? { ...this.env, ...env } : this.env,
         cwd: this.workspace,
         input: input ?? '',
         maxBuffer: 256 * 1024 * 1024,
@@ -542,6 +641,74 @@ export class Shadow {
       fs.rmSync(lock, { force: true });
     }
   }
+}
+
+/** From this many files on, an add writes one pack instead of a file per object. */
+const BULK_FILES = 100;
+/** Once status would list this many files that differ from HEAD, HEAD moves up. */
+const HEAD_AFTER = 1000;
+const TOO_BIG_FILES = 'belayd-too-big-files.json';
+/** Two seconds covers the coarsest file times in use (FAT, HFS+, some network shares). */
+const RACY_MS = 2000;
+
+/**
+ * Files left out of the snapshots for their size, with what they looked like then. A
+ * file counts as unchanged only while its size, inode and both file times all still
+ * match, and is only recorded once those times are a few seconds old: a write within
+ * the same clock tick could otherwise go unnoticed.
+ */
+class TooBigFiles {
+  changed = false;
+  constructor(readonly entries: Record<string, string>) {}
+
+  get size(): number {
+    return Object.keys(this.entries).length;
+  }
+
+  has(file: string, workspace: string): boolean {
+    const sig = this.entries[file];
+    return sig !== undefined && sig === signature(path.join(workspace, file));
+  }
+
+  /** Forgets the files Git no longer lists (deleted, captured, or ignored now). */
+  keep(listed: string[]): TooBigFiles {
+    const set = new Set(listed);
+    const next = new TooBigFiles({});
+    for (const [f, sig] of Object.entries(this.entries)) {
+      if (set.has(f)) next.entries[f] = sig;
+      else next.changed = true;
+    }
+    next.changed ||= this.changed;
+    return next;
+  }
+
+  add(files: string[], workspace: string): TooBigFiles {
+    for (const f of files) {
+      const sig = signature(path.join(workspace, f), Date.now() - RACY_MS);
+      if (sig === this.entries[f]) continue;
+      if (sig) this.entries[f] = sig;
+      else delete this.entries[f];
+      this.changed = true;
+    }
+    return this;
+  }
+}
+
+/**
+ * A file's size, inode and file times, or undefined when it is missing or not a regular
+ * file, or when (with `before`) it changed too recently to tell apart from a later write.
+ */
+function signature(file: string, before?: number): string | undefined {
+  let st: fs.BigIntStats;
+  try {
+    st = fs.lstatSync(file, { bigint: true });
+  } catch {
+    return undefined;
+  }
+  if (!st.isFile()) return undefined;
+  if (before !== undefined && (Number(st.mtimeMs) >= before || Number(st.ctimeMs) >= before))
+    return undefined;
+  return `${st.size}:${st.ino}:${st.mtimeNs}:${st.ctimeNs}`;
 }
 
 /** Exists without following a final symlink (a dangling link still exists). */
