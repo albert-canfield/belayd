@@ -1,6 +1,6 @@
 # Landscape
 
-Who else is working on agent safety, what they do well, and where the gap is. First surveyed 13 Oct 2026, updated 19 Oct 2026. Star counts and release dates come from the GitHub API on 19 Oct; rows marked † were not re-checked and show 13 Oct figures. Feature notes come from each project's README and docs; a "?" means we could not confirm it.
+Who else is working on agent safety, what they do well, and where the gap is. First surveyed 13 Oct 2026, updated 19 and 20 Oct 2026. Star counts and release dates come from the GitHub API on 19 Oct; rows marked † were not re-checked and show 13 Oct figures. Feature notes come from each project's README and docs; a "?" means we could not confirm it.
 
 ## The short version
 
@@ -12,7 +12,15 @@ Blocking is now a commodity. Undo is not, and running several agents at once is 
 - **Sandboxes** contain the process. They are the right answer for hostile code, but they don't reason about single tool calls and mostly never ask.
 - **Several agents in one project** is the open space. Nobody we found tells you which agent changed a file, undoes one agent's work while another keeps going, or warns before one agent throws away another's uncommitted changes.
 
-## What changed since 13 Oct
+## What changed since 19 Oct
+
+- **Parallel agents lose each other's work, and the agents say they cannot fix it.** In [claude-code #26264](https://github.com/anthropics/claude-code/issues/26264), parallel agents' `git checkout --` and `git stash` lost 17 files of another agent's uncommitted work; [#102465](https://github.com/anthropics/claude-code/issues/102465) (15 Oct 2026, open) asks for a check before a destructive stash. In [codex #10681](https://github.com/openai/codex/issues/10681), Codex reverts other agents' changes, and OpenAI called it "model behavior, not something that can be changed with a simple bug fix in the Codex harness". Users write their own hooks that block every `git stash` ([funcd #560](https://github.com/pyvvo/funcd/issues/560)). belayd 0.4 asks only when another live agent's uncommitted files are at stake.
+- **Repositories attack the agent.** GitSpawn ([Manifold](https://www.manifold.security/blog/ai-coding-agents-git-hijack), 1 Sep 2026) plants `core.fsmonitor` in a repository's own config, so the agent's `git status` runs it. A malicious repository steered Claude Code through a subagent file ([Straiker](https://www.straiker.ai/blog/how-a-malicious-repo-tricked-claude-code-into-running-malware)); Anthropic treated it as a workspace-trust decision. Hooks shipped in plugin updates compromised every harness tested ([arXiv 2609.03884](https://arxiv.org/abs/2609.03884)). belayd itself ran `git status` in projects to check scripts and was such a sink until 0.4.0.
+- **Made-up package names.** Models invent package names in about 5% of answers ([USENIX Security 2025](https://arxiv.org/abs/2406.10279); a [2026 re-run](https://arxiv.org/abs/2605.17062) found 4.6% to 6.1% on current models), and attackers register them. Hook-time checks for package age and existence exist only in projects with no stars yet.
+- **Agents changed.** OpenCode 2 does not run OpenCode 1 plugins ([migration guide](https://opencode.ai/v2/docs/build/plugins/migrate-v1)); belayd's plugin works in both since 0.4.0. Copilot CLI 1.0.97 turns a hook's `ask` into a deny in autopilot. Cursor 3.24 gives shell and MCP hooks a `tool_use_id`. Codex 0.164 alphas bind plugin hook approval to a hash of the plugin.
+- **More incidents.** `prisma db push --force-reset` dropped 87 tables ([claude-code #36183](https://github.com/anthropics/claude-code/issues/36183)). Agents created public repositories to share screenshots, exposing thousands of internal images ([PixelLeak](https://www.glow.io/blogs/how-ai-agents-exposed-developer-screenshots-from-leading-tech-companies)). The ChainDrop worm persisted through `.claude/settings.json` and `.vscode/tasks.json` ([Microsoft](https://www.microsoft.com/en-us/security/blog/2026/08/04/chaindrop-supply-chain-compromise-anatomy-self-propagating-worm/)). belayd 0.4 asks about each of these.
+
+## What changed between 13 and 19 Oct
 
 - Codex removed undo: [PR #19481](https://github.com/openai/codex/pull/19481), merged 28 Apr 2026, made it "a no-op that reports the feature is unavailable".
 - node9 removed its shadow-git undo on 22 Aug 2026. Its own code says the store "grew ~19 MB per minute of active agent work and took one machine to 378 GB" ([undo.ts](https://github.com/node9-ai/node9-proxy/blob/main/src/cli/commands/undo.ts)).
@@ -132,7 +140,7 @@ These are complements, not competitors. belayd recommends pairing with one of th
 ## Gaps we can own
 
 1. **Undo of shell side effects, tied to an audit row, across agents.** This is the headline, not "blocks `rm -rf`". Native undo skips Bash or is gone, and node9 dropped it. belayd snapshots before and after every step that can change files, keeps the store bounded, and undoes one step, a range or a session.
-2. **Several agents in one project.** belayd already attributes each changed file to the agent that changed it and undoes one agent's work without touching another's. Next: warn before one agent's `git reset --hard` or `git checkout -- .` throws away another agent's uncommitted work, flag an agent that starts another agent with its safety switched off (the s1ngularity pattern), and show which agents are working in a project right now.
+2. **Several agents in one project.** belayd attributes each changed file to the agent that changed it, undoes one agent's work without touching another's, and since 0.4 asks before one agent throws away, stashes, commits or overwrites another live agent's uncommitted work, asks when an agent starts another with its safety switched off (the s1ngularity pattern), and shows who is working in a project with `belayd ps`. Nothing else we found does any of this at hook time.
 3. **Asking where the agent can't.** Codex ignores `ask`, Cursor doesn't enforce it, and Copilot's hooks fail open on timeout. belayd holds the call and asks through its own channel, and no answer means no.
 4. **A readable floor under the classifiers.** Auto mode is the default and misses about one in six. The pitch is "keep auto mode, add rules you can read and an undo", not "replace your prompts".
 5. **Unparseable means ask.** Fence runs commands it can't parse and Sage allows on errors. belayd asks.
@@ -155,7 +163,7 @@ The threat model says it plainly: guardrail, recorder and recovery, not a contai
 ## Risks to watch
 
 - **Claude Code closes the gap.** A `/rewind` that tracks Bash, or Anthropic's sample `blast-radius` mod (holds `rm -rf` or a force push and shows what would change) becoming a built-in feature, would cover the biggest agent. Watch the changelog. The multi-agent case stays open either way.
-- **Mods can overrule hooks.** On a machine without managed settings, a Claude Code mod that handles `tool.check` can approve a call belayd blocked. The README and SECURITY.md say so, and `belayd doctor` should flag such mods.
+- **Mods can overrule hooks.** On a machine without managed settings, a Claude Code mod that handles `tool.check` can approve a call belayd blocked. The README and SECURITY.md say so, and since 0.4 `belayd doctor` lists such mods.
 - **Name confusion.** A "Belay" agent firewall (AGPL plus an enterprise tier, 11 agents, [developersdigest](https://www.developersdigest.tech/blog/ai-coding-agent-firewalls-compared-2026); we could not find its repository), the npm package [@fathomforge/belay](https://www.npmjs.com/package/@fathomforge/belay) (spend caps) and [agent-belay](https://github.com/mikepenz/agent-belay) all sit nearby. Always write the name as belayd, with the d.
 
 ## Similar names

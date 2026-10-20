@@ -16,7 +16,7 @@ Coding agents are fast, confident, and running with your permissions. Most days 
 
 **belayd sits between your agents and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong, including what its shell commands did. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI, OpenCode and any MCP server.
 
-**Running two agents in the same repo?** belayd knows which one changed what. Undo the Codex session and Claude Code's work stays exactly where it was.
+**Running two agents in the same repo?** belayd knows which one changed what. When Codex is about to `git stash` or `git checkout -- .` away work Claude Code hasn't committed yet, belayd asks first and names the files. Undo the Codex session and Claude Code's work stays exactly where it was.
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="100%" alt="belayd blocking a curl-to-bash install and a hidden rm -rf, replaying an agent session where it stopped rm -rf ~ and a read of .env, then undoing the step that broke the build">
@@ -89,7 +89,26 @@ See why with belayd check --explain "<command>". Once belayd is on, belayd tune 
 
 **It undoes.** belayd snapshots files before and after every step that can change them, shell commands included, in a shadow Git repository that never touches your own `.git`. `belayd undo 7` puts back exactly what step 7 changed. Claude Code's `/rewind` and Cursor's checkpoints can't undo what a shell command did. belayd can.
 
-**It keeps several agents apart.** Run Claude Code and Codex (or three Claude Codes) in the same project at once, and every step still owns only what it changed: belayd checks each changed file against what the other agents were doing at that moment. `belayd undo --whole-session --session <id>` takes back one agent's work and leaves the others' alone, and `belayd replay` shows each agent only its own files. A file two agents may both have changed is left alone unless you pass `--force`.
+**It keeps several agents apart.** Run Claude Code and Codex (or three Claude Codes) in the same project at once, and belayd watches all of them:
+
+- When one agent is about to throw away, stash, commit or write over changes another agent made and hasn't committed (`git checkout -- .`, `git reset --hard`, `git stash`, `git add -A && git commit`, a branch switch, a plain overwrite), belayd asks first and says whose files they are. Agents only know their own work. belayd sees everyone's.
+- `belayd ps` shows who is working in the project right now, what each agent did last, and which of its changes aren't committed yet.
+- Undo stays per agent. `belayd undo --whole-session --session <id>` takes back one agent's work and leaves the others' alone, and `belayd replay` shows each agent only its own files. A file two agents may both have changed is left alone unless you pass `--force`.
+- An agent that starts another agent with its safety switched off (`claude --dangerously-skip-permissions`, `codex --yolo`, `gemini --yolo`, `copilot --allow-all-tools`) gets a question, even through `npx`, `ollama launch` or a Python subprocess.
+
+```console
+$ belayd ps
+belayd ps · my-app · 2 agents working
+
+Claude Code  3f2a9c1e  active just now · 41 calls since 10:04 AM
+  last     npm test
+  changed  src/parser.ts, src/lexer.ts · not committed
+
+Codex  019a2b3c  active 2 min ago · 12 calls since 10:20 AM
+  last     apply_patch: update src/parser.ts
+  changed  src/parser.ts · not committed
+  ! src/parser.ts was also changed by Claude Code 3f2a9c1e
+```
 
 ## What it catches
 
@@ -112,6 +131,9 @@ With the default `balanced` policy:
 | `npm publish` | asks | Publishes to the world |
 | `psql -c "DROP TABLE users"` | asks | Drops a table |
 | `echo hi > /etc/hosts` | asks | Changes a file outside the project |
+| `claude --dangerously-skip-permissions -p "fix it"` | asks | Starts an agent that asks nobody |
+| `git commit --no-verify -m wip` | asks | Skips the project's pre-commit checks |
+| `gh repo create shots --public` | asks | Makes it readable by anyone |
 | `npm test` | quiet | Your agent decides as usual |
 | `rm -rf node_modules dist` | quiet | Inside the project, and undo can bring it back |
 <!-- catches:end -->
@@ -228,7 +250,7 @@ belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 Coding agents run unattended in CI too, where nobody is watching the log. The belayd action sets up belayd and its hooks for the agents in the job, and when the job ends it puts what every agent did, and what belayd decided, in the job summary:
 
 ```yaml
-- uses: albert-canfield/belayd@v0.3.0
+- uses: albert-canfield/belayd@v0.4.0
   with:
     fail-on-block: true # fail the job if belayd blocked anything
 - run: claude -p "Fix the failing test in src/parser.ts"
@@ -283,6 +305,7 @@ Plain words, because a safety tool that oversells itself is worse than none:
 - **Agents fail open on some failures.** belayd always answers before the agent's hook timeout, blocks on its own errors, and installs a guard that turns a crash into a block. Claude Code 2.1.295 and later also block on hook timeouts; older versions don't.
 - **Undo covers files in the project**, up to 20 MB each, for 30 days. It can't take back a push, an email, a database write or a file outside the project.
 - **Inside your own committed scripts, belayd only blocks.** A script committed to Git, unchanged, and not written by the agent in the session is treated as your code: what belayd can see there is checked as usual, what it can't see is not a question. Scripts the agent wrote or changed get the full check.
+- **It knows another agent's work from the commands it saw.** A file counts as another agent's when that agent's command named it (an edit, a write, `rm`, `sed -i`, a redirect). Files changed only as a side effect, like a lockfile rewritten by `npm install`, don't count, and an agent counts as still working for 30 minutes after its last tool call.
 - **The audit log is tamper-evident, not tamper-proof.** The hash chain catches accidents and casual edits. Someone with full access to your account can rebuild it.
 
 For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SECURITY.md](SECURITY.md).
@@ -327,12 +350,12 @@ Inside WSL, yes: install belayd in the same WSL distribution your agent runs in,
 
 ## What's next
 
-belayd's focus is the case almost nothing else covers: several agents working in one project. Planned for 0.4:
+Planned for 0.5, from what goes wrong when agents work in real projects:
 
-- **No more stepping on each other.** If one agent runs `git reset --hard`, `git checkout -- .`, `git clean` or `git stash` while another still has uncommitted work in the project, belayd asks first and tells you whose files would go.
-- **Agents starting agents with the brakes off.** An agent that launches `claude --dangerously-skip-permissions`, `gemini --yolo` or `copilot --allow-all-tools` gets a question. [Malware has done exactly this](https://www.wiz.io/blog/s1ngularity-supply-chain-attack) to go looking for secrets.
-- **A live view** of which agents are working in a project, what each one is doing and what it changed.
-- **`belayd doctor` spots Claude Code mods** that could overrule belayd.
+- **A look before the first command.** A cloned repository can carry things that run code or steer the agent: Git options in its own config, hooks for each agent, subagent definitions, MCP servers, editor tasks. belayd will list them when an agent starts work there and ask when one is new or changed.
+- **Packages nobody has heard of.** Models make up package names, and attackers register them. belayd will ask before an agent installs a package that isn't in the lockfile and is brand new or doesn't exist.
+- **Secrets that already reached an agent.** `belayd scan` will also report keys and tokens sitting in your agents' past transcripts, so you know what to rotate.
+- **Install as a Claude Code plugin**, alongside `npm install`.
 
 The longer plan, and the reasons behind it, are in [docs/plan.md](docs/plan.md#9-direction-and-roadmap). Ideas are welcome as [issues](https://github.com/albert-canfield/belayd/issues).
 

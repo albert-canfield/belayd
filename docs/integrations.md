@@ -25,7 +25,7 @@ Three conclusions shape the design:
 
 Changes found on 19 Oct 2026 (sources in [landscape.md](landscape.md#what-the-agents-do-natively)):
 
-- **Claude Code mods** (v2.1.287+) are JavaScript handlers that run inside Claude Code. On a machine without managed settings, a mod's `tool.check` can approve a call that a PreToolUse hook blocked. Installing belayd through managed settings closes this; `belayd doctor` should flag such mods (planned for 0.4).
+- **Claude Code mods** (v2.1.287+) are JavaScript handlers that run inside Claude Code. On a machine without managed settings, a mod's `tool.check` can approve a call that a PreToolUse hook blocked. Installing belayd through managed settings closes this; `belayd doctor` lists such mods (since 0.4).
 - **Codex 0.163.0** still treats `ask` as "parsed but not supported yet", and has no undo command since April 2026.
 - **Copilot CLI** documents that hook timeouts "are fail-open for every event, including preToolUse". belayd answers well inside its deadline.
 - **Cursor** accepts `ask` in preToolUse "but [does] not enforce" it, and hooks fail open unless `failClosed` is set.

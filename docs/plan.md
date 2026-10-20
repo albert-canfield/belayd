@@ -329,6 +329,7 @@ Written 19 Oct 2026, after 0.3.0.
 | 0.1.0 | 14 Oct | M1 to M7: policy, shell analysis, approvals, audit, undo, Claude Code, Codex, Copilot CLI, Gemini CLI, the MCP gateway |
 | 0.2.0 | 15 Oct | `belayd tune`, checks inside scripts the agent wrote, environment runners (`uv run`, `poetry run`), OpenCode, the GitHub Action, the differential test |
 | 0.3.0 | 19 Oct | `belayd scan`, undo per agent when several share a project, extra folders, snapshot retention, trust for committed and unchanged scripts |
+| 0.4.0 | 20 Oct | A question before one agent wrecks another's uncommitted work, `belayd ps`, questions for agents started with their safety off, the mods check in `doctor`, questions for skipped Git hooks, public repositories, files that run code, cloud deletes and database resets, OpenCode 2, much cheaper snapshots in big projects, and a fix for a repository's Git config running code |
 
 ### What changed around us
 
@@ -338,6 +339,7 @@ The market check in [landscape.md](landscape.md) changed the plan more than any 
 - **Undo got rarer.** Codex removed it, node9 removed it after its store hit 378 GB, and Claude Code's `/rewind` still skips Bash.
 - **Classifiers are the default.** Claude Code's auto mode is on for everyone, and Anthropic reports it misses 17% of real overeager actions. People keep it on. They want a floor under it, not a replacement.
 - **People run several agents at once**, and nothing on the list handles that.
+- **On 20 Oct a second check added more.** Agent issue trackers are full of parallel agents losing each other's work to `git stash` and `git checkout --` (claude-code #26264, #102465; codex #10681, which OpenAI called model behaviour it cannot fix in the harness). Cloned repositories now attack agents through their own Git config, subagent files and plugin updates. Models invent package names often enough that attackers register them. OpenCode 2 stopped running OpenCode 1 plugins. Sources are in [landscape.md](landscape.md#what-changed-since-19-oct).
 
 ### What belayd is for, from here
 
@@ -357,26 +359,33 @@ What it won't chase: pattern packs for their own sake, an account or a cloud ser
 - **Misses are measured too.** The differential test runs about 700 commands in real bash and fails on anything dangerous that belayd let through. When a precision change sits in the test's blind spot, the oracle gets sharper; belayd does not get looser.
 - **The hook stays fast.** CI fails if belayd's overhead goes above 100 ms.
 
-### 0.4: agents that share a project
+### Shipped in 0.4.0: agents that share a project
+
+All four items shipped in 0.4.0: the collision guard (`ask-other-agents-work`, src/policy/clobber.ts, fed by a per-project ledger of which session's commands named which files), agents started with their safety off (`ask-agent-without-safety`, src/policy/unguarded.ts), the live view (`belayd ps`), and the mods check in `belayd doctor`. Each has corpus rows or end-to-end tests that try to get around it.
+
+### 0.5: what a project brings with it
 
 | | Scope | Done when |
 |---|---|---|
-| Collision guard | When an agent runs `git checkout -- .`, `git reset --hard`, `git clean`, `git stash` or `git add -A && git commit` while another agent that is still active has uncommitted changes in the same project, belayd asks first and names the files the other agent would lose | Two live agents in one repository: the second one's `reset --hard` asks and lists the first one's files. With one agent, nothing changes |
-| Agents starting agents | An agent that starts another agent with its safety switched off (`--dangerously-skip-permissions`, `--yolo`, `--allow-all-tools` and the like) gets a question. The s1ngularity malware did exactly this to hunt for secrets | Corpus rows for each supported agent's flags, also behind wrappers, variables and `bash -c`, plus differential cases |
-| Live view | One command that shows which agents are working in a project right now, what each is doing and which files each has changed | Correct for two live agents; nothing added to the hook path |
-| Mods check | `belayd doctor` warns about Claude Code mods that handle `tool.check`, since on machines without managed settings they can overrule belayd | Doctor warns on a fixture mod and stays quiet without one |
+| A look before the first command | When an agent starts work in a project, list what can run code or steer the agent there: command-running Git options in the project's own config, each agent's project hooks and plugins, subagent and skill files, MCP servers, editor tasks. Remember them, and ask when one is new or changed since belayd last saw it | A cloned repository with a planted `core.fsmonitor`, a project hook and a subagent file gets one question naming all three; an unchanged project gets none |
+| Packages nobody has heard of | Ask before an agent installs a package that is not in the lockfile and is either brand new or missing from the registry (the shape of slopsquatting), across npm, pnpm, yarn, bun, pip, uv and cargo, through runners and wrappers | Corpus rows for each manager; a registry lookup that is cached, has a short deadline and asks when it cannot answer |
+| Secrets that already reached an agent | `belayd scan` reports keys and tokens found in agents' past transcripts and tool output, by file and kind, never printing the value | Finds planted test keys in a fake history; prints none of them |
+| Install as a Claude Code plugin | A marketplace in this repository, so `claude plugin install` sets belayd up | A fresh Claude Code installs it from the marketplace and blocks `cat .env` |
 
 ### Later
 
-- **Easier installs.** A Claude Code plugin marketplace in this repository (`claude plugin install`), Copilot CLI and Gemini CLI extension packages, the action listed on GitHub Marketplace, awesome-claude-code once the project is 14 days old, and a Homebrew tap until Homebrew core's star threshold is met.
+- **Easier installs.** Copilot CLI and Gemini CLI extension packages, the action listed on GitHub Marketplace, awesome-claude-code once the project is 14 days old, and a Homebrew tap until Homebrew core's star threshold is met.
 - **The quiet tail.** Deletes of temporary paths belayd can't resolve, programs chosen through a variable, and `git update-ref` still ask more often than they need to.
 - **More agents.** Antigravity CLI once its hooks settle, and Ollama's own agent once it has a hook point.
 - **A page on using belayd alongside auto mode and a sandbox**, since that is how most people will run it.
+- **An audit export** (JSONL and OpenTelemetry) for teams that keep agent logs centrally. Research in September showed agents in every major harness can delete their own traces; belayd's log already sits outside the agent's control.
+- **Cross-agent write-then-run.** belayd asks when an agent runs a script it changed itself. The same question when one agent runs what another agent just wrote.
 
 ### Risks
 
 - **Claude Code closes part of the gap.** A `/rewind` that tracks Bash, or Anthropic's sample `blast-radius` mod becoming a built-in feature, would cover single-agent undo on the biggest agent. The multi-agent work stays useful either way, which is one more reason to lead with it.
-- **Mods can overrule hooks** on machines without managed settings. Documented in the README and SECURITY.md; the doctor check above makes it visible.
+- **Mods can overrule hooks** on machines without managed settings. Documented in the README and SECURITY.md; `belayd doctor` lists such mods since 0.4.
+- **Agents change their plugin and hook formats.** OpenCode 2 silently stopped running OpenCode 1 plugins. Every agent belayd supports gets a live check before a release that names it.
 - **Name confusion** with other "belay" projects (see [landscape.md](landscape.md#risks-to-watch)).
 
 ## Name
