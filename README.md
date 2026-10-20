@@ -14,7 +14,9 @@
 
 Coding agents are fast, confident, and running with your permissions. Most days that's great. Then one of them force pushes to main, reads your `.env` into its context, or tidies up the wrong folder, and you find out afterwards.
 
-**belayd sits between your agent and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI, OpenCode and any MCP server.
+**belayd sits between your agents and your machine.** It reads every command before it runs, stops the ones you would never approve, asks you about the risky ones, writes everything down, and puts your files back when an agent gets it wrong, including what its shell commands did. One policy covers Claude Code, Codex, Copilot CLI, Gemini CLI, OpenCode and any MCP server.
+
+**Running two agents in the same repo?** belayd knows which one changed what. Undo the Codex session and Claude Code's work stays exactly where it was.
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="100%" alt="belayd blocking a curl-to-bash install and a hidden rm -rf, replaying an agent session where it stopped rm -rf ~ and a read of .env, then undoing the step that broke the build">
@@ -265,7 +267,10 @@ A hook call takes about 60 to 90 ms on an M-series Mac, of which belayd adds 20 
 | Asks you, including in headless runs | ✓ | In interactive sessions | Mostly blocks only | Rarely |
 | Audit log you can replay | ✓ | Transcripts | Some | Some |
 | Undo changes made by shell commands | ✓ | Mostly no (OpenCode's `/undo` is the exception) | No | nono: rollback |
+| Knows which agent changed what, undoes one and keeps the rest | ✓ | Each agent only sees itself | No | No, or a separate copy per agent |
 | Stops a determined, malicious program | No | No | No | ✓ |
+
+Most agents now come with their own safety classifier, and Claude Code's auto mode is on by default. Keep it. Anthropic's own numbers say it misses 17% of real overeager actions ([source](https://www.anthropic.com/engineering/claude-code-auto-mode)), so belayd sits underneath: rules you can read, a log, and an undo for whatever gets through.
 
 A sandbox and belayd solve different problems. A sandbox contains code you don't trust. belayd catches mistakes made by an agent you mostly do trust, explains them, and lets you take them back. Use both if you can. There is a longer survey in [docs/landscape.md](docs/landscape.md).
 
@@ -299,6 +304,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | `belayd tune` | Turn questions you keep approving into exact allow rules |
 | `belayd doctor` | Check that everything is installed and working, and how much space snapshots take |
 | `belayd gc` | Prune old snapshots now (`--snapshots-only`), or old audit events too |
+| `belayd presets` | List the built-in presets and where to read them |
 | `belayd uninstall` | Remove every hook belayd installed (your log and snapshots stay) |
 
 ## FAQ
@@ -317,6 +323,17 @@ Inside WSL, yes: install belayd in the same WSL distribution your agent runs in,
 
 **How do I turn it off?**
 `belayd uninstall`. Your `belayd.yaml`, audit log and snapshots stay where they are.
+
+## What's next
+
+belayd's focus is the case almost nothing else covers: several agents working in one project. Planned for 0.4:
+
+- **No more stepping on each other.** If one agent runs `git reset --hard`, `git checkout -- .`, `git clean` or `git stash` while another still has uncommitted work in the project, belayd asks first and tells you whose files would go.
+- **Agents starting agents with the brakes off.** An agent that launches `claude --dangerously-skip-permissions`, `gemini --yolo` or `copilot --allow-all-tools` gets a question. [Malware has done exactly this](https://www.wiz.io/blog/s1ngularity-supply-chain-attack) to go looking for secrets.
+- **A live view** of which agents are working in a project, what each one is doing and what it changed.
+- **`belayd doctor` spots Claude Code mods** that could overrule belayd.
+
+The longer plan, and the reasons behind it, are in [docs/plan.md](docs/plan.md#9-direction-and-roadmap). Ideas are welcome as [issues](https://github.com/albert-canfield/belayd/issues).
 
 ## Contributing
 

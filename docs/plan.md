@@ -1,10 +1,10 @@
 # belayd: architecture and plan
 
-Status: draft for review (M1). Working name `belayd`, see [Name](#name) for an open question.
+Status: M1 to M7 shipped as 0.1.0 on 14 Oct 2026, followed by 0.2.0 (15 Oct) and 0.3.0 (19 Oct). Sections 2 to 8 are the original plan, kept as the record of why things are built the way they are. Where belayd goes next is in [section 9](#9-direction-and-roadmap).
 
 ## 1. What we are building
 
-A local safety and approval layer for AI coding agents. One policy file, one audit log and one undo command across Claude Code, Codex, Cursor, Gemini CLI and MCP servers.
+A local safety and approval layer for AI coding agents. One policy file, one audit log and one undo command across Claude Code, Codex, Copilot CLI, Gemini CLI, OpenCode, Cursor and MCP servers.
 
 ```
 npx belayd-cli init            # detect agents, install hooks, write belayd.yaml
@@ -17,7 +17,7 @@ belayd undo --session <id> # restore everything a session changed
 
 belayd is a guardrail, not a sandbox. It sees what an agent asks to do through the agent's own hook system (or through the MCP gateway) and decides before the action runs. It does not stop a process that escapes those hooks. The README threat model must say this plainly.
 
-Positioning, from `docs/landscape.md`: guards like dcg block commands, sandboxes like nono contain processes, viewers like agentsview show history. Nobody with traction combines one cross-agent policy, approvals, a replayable audit and an undo that covers shell commands. belayd is the **flight recorder and undo button for every coding agent**, with one readable policy in front.
+Positioning, from `docs/landscape.md`: guards like dcg block commands, sandboxes like nono contain processes, viewers like agentsview show history. Nobody with traction combines one cross-agent policy, approvals, a replayable audit and an undo that covers shell commands. belayd is the **flight recorder and undo button for every coding agent**, with one readable policy in front. Since 19 Oct the lead is the multi-agent case: see [section 9](#9-direction-and-roadmap).
 
 ## 2. Architecture
 
@@ -190,7 +190,7 @@ Recommendation: a **shadow repository per workspace** at `$BELAYD_HOME/snapshots
 - Works in folders that are not Git repos.
 - Respects the workspace `.gitignore` files, and belayd adds its own excludes (`node_modules`, build output) for non-Git folders.
 
-Alternative from the handover: `refs/belayd/*` inside the user's repo. It is cheaper for huge repos (objects are shared), but it writes into the user's repo. Decision needed, see open questions.
+Alternative from the handover: `refs/belayd/*` inside the user's repo. It is cheaper for huge repos (objects are shared), but it writes into the user's repo. Decided for the shadow repository (section 7).
 
 Flow:
 - **Pre-action**: for write tools with a known path, store that file's current blob (or a "did not exist" marker). For shell commands that are not on a read-only list (`ls`, `cat`, `grep`, `git status`, ...), commit the whole worktree using a persistent shadow index, so only changed files are rehashed.
@@ -320,6 +320,65 @@ Voice rules: short concrete sentences, a bit of personality, no em-dashes, no "s
 - **Codex** gets no `ask` and no plain `allow`: a held call answers deny, or nothing plus a `systemMessage`.
 - **MCP tool calls** get file and shell rules: path-like arguments are reads or writes, and shell-style tools have their command analysed.
 
+## 9. Direction and roadmap
+
+Written 19 Oct 2026, after 0.3.0.
+
+| Release | Date | What it added |
+|---|---|---|
+| 0.1.0 | 14 Oct | M1 to M7: policy, shell analysis, approvals, audit, undo, Claude Code, Codex, Copilot CLI, Gemini CLI, the MCP gateway |
+| 0.2.0 | 15 Oct | `belayd tune`, checks inside scripts the agent wrote, environment runners (`uv run`, `poetry run`), OpenCode, the GitHub Action, the differential test |
+| 0.3.0 | 19 Oct | `belayd scan`, undo per agent when several share a project, extra folders, snapshot retention, trust for committed and unchanged scripts |
+
+### What changed around us
+
+The market check in [landscape.md](landscape.md) changed the plan more than any bug did:
+
+- **Blocking is a commodity.** Perplexity and Gen Digital/Norton ship free hook guards, cc-safety-net gets about 59,000 npm downloads a month, and every agent now blocks and asks on its own. Being one more blocker gets belayd ignored.
+- **Undo got rarer.** Codex removed it, node9 removed it after its store hit 378 GB, and Claude Code's `/rewind` still skips Bash.
+- **Classifiers are the default.** Claude Code's auto mode is on for everyone, and Anthropic reports it misses 17% of real overeager actions. People keep it on. They want a floor under it, not a replacement.
+- **People run several agents at once**, and nothing on the list handles that.
+
+### What belayd is for, from here
+
+Be very good at a narrow job other tools can't do, rather than adequate at a broad one everyone does:
+
+1. **Several agents, one project.** belayd sees every agent's calls in one log, so it is the one place that can tell them apart, stop one from wrecking another's work, and undo one without touching the others. This is the lead in the README and in every launch post.
+2. **Undo that covers the shell**, tied to an audit row and bounded on disk.
+3. **Asking where the agent can't**: Codex ignores `ask`, Cursor doesn't enforce it, Copilot's hooks fail open on timeout, and headless runs have nobody at the prompt.
+4. **A quiet, readable floor under the classifiers.** Keep auto mode. belayd adds rules you can read, a log and an undo, and stays silent the rest of the time.
+
+What it won't chase: pattern packs for their own sake, an account or a cloud service, a sandbox of its own, or a language model in the hook path.
+
+### How the work is judged
+
+- **Precision may only add findings, unless the set of values is provably complete.** A feature that turns a question into a quiet pass gets adversarial tests that try to abuse it before it is committed. The worst regressions found in the October security reviews came from features like these.
+- **Quiet is measured, not claimed.** Every release replays real agent history with `belayd scan` and must not add questions without a reason.
+- **Misses are measured too.** The differential test runs about 700 commands in real bash and fails on anything dangerous that belayd let through. When a precision change sits in the test's blind spot, the oracle gets sharper; belayd does not get looser.
+- **The hook stays fast.** CI fails if belayd's overhead goes above 100 ms.
+
+### 0.4: agents that share a project
+
+| | Scope | Done when |
+|---|---|---|
+| Collision guard | When an agent runs `git checkout -- .`, `git reset --hard`, `git clean`, `git stash` or `git add -A && git commit` while another agent that is still active has uncommitted changes in the same project, belayd asks first and names the files the other agent would lose | Two live agents in one repository: the second one's `reset --hard` asks and lists the first one's files. With one agent, nothing changes |
+| Agents starting agents | An agent that starts another agent with its safety switched off (`--dangerously-skip-permissions`, `--yolo`, `--allow-all-tools` and the like) gets a question. The s1ngularity malware did exactly this to hunt for secrets | Corpus rows for each supported agent's flags, also behind wrappers, variables and `bash -c`, plus differential cases |
+| Live view | One command that shows which agents are working in a project right now, what each is doing and which files each has changed | Correct for two live agents; nothing added to the hook path |
+| Mods check | `belayd doctor` warns about Claude Code mods that handle `tool.check`, since on machines without managed settings they can overrule belayd | Doctor warns on a fixture mod and stays quiet without one |
+
+### Later
+
+- **Easier installs.** A Claude Code plugin marketplace in this repository (`claude plugin install`), Copilot CLI and Gemini CLI extension packages, the action listed on GitHub Marketplace, awesome-claude-code once the project is 14 days old, and a Homebrew tap until Homebrew core's star threshold is met.
+- **The quiet tail.** Deletes of temporary paths belayd can't resolve, programs chosen through a variable, and `git update-ref` still ask more often than they need to.
+- **More agents.** Antigravity CLI once its hooks settle, and Ollama's own agent once it has a hook point.
+- **A page on using belayd alongside auto mode and a sandbox**, since that is how most people will run it.
+
+### Risks
+
+- **Claude Code closes part of the gap.** A `/rewind` that tracks Bash, or Anthropic's sample `blast-radius` mod becoming a built-in feature, would cover single-agent undo on the biggest agent. The multi-agent work stays useful either way, which is one more reason to lead with it.
+- **Mods can overrule hooks** on machines without managed settings. Documented in the README and SECURITY.md; the doctor check above makes it visible.
+- **Name confusion** with other "belay" projects (see [landscape.md](landscape.md#risks-to-watch)).
+
 ## Name
 
 **belayd.** A belayer lets a climber go hard and catches the fall. That is the product: let the agent work, and catch it when it slips, with approval before the risky move and undo after the bad one.
@@ -328,4 +387,4 @@ The working name was `leashd`. We dropped it because an active Python project wi
 
 `belayd` was free on npm, PyPI and crates.io on 13 Oct 2026, with no same-name agent project. The nearest neighbour is [Agent Belay](https://github.com/mikepenz/agent-belay), a small Kotlin desktop app for approving Claude Code and Copilot actions. Different name and different form, but we mention it in the comparison.
 
-Still to do before launch: register the npm package, the GitHub repo and a domain on the same day, and run a quick trademark search.
+At release npm refused `belayd` as too similar to the existing package `delay`, so the package is `belayd-cli` and the command it installs is still `belayd`. The same filter keeps anyone else from registering `belayd`.
