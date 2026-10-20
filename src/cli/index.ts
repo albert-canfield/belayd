@@ -89,6 +89,17 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('ps')
+    .description('Show the agents working in this project right now, and their uncommitted changes')
+    .option('--all', 'every project with an agent at work')
+    .option('--watch', 'keep the view open and refresh it every two seconds')
+    .option('--json', 'print it as JSON')
+    .action(async (opts) => {
+      const { ps } = await import('./ps.js');
+      process.exitCode = await ps(opts);
+    });
+
+  program
     .command('replay')
     .description('Replay a session as a readable timeline (default: the latest in this project)')
     .argument('[session]', 'session id, or the first few characters of it')

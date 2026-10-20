@@ -66,6 +66,8 @@ export function noteCall(
     if (call.label) line.l = call.label.slice(0, 200);
     fs.appendFileSync(file, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     if (fresh) {
+      // Which project this is, for `belayd ps --all`.
+      fs.writeFileSync(path.join(dir, 'workspace'), workspace, { mode: 0o600 });
       for (const name of fs.readdirSync(dir)) {
         const b = Number(name.replace(/\.jsonl$/, ''));
         if (Number.isFinite(b) && b < bucket - KEEP_BUCKETS) fs.rmSync(path.join(dir, name));
@@ -129,4 +131,25 @@ export function liveSessions(
     }
   }
   return [...sessions.values()].sort((a, b) => b.last - a.last);
+}
+
+/** Projects with an agent at work in the last `windowMs`. */
+export function liveWorkspaces(belaydHome: string, now = Date.now(), windowMs = LIVE_MS): string[] {
+  const root = path.join(belaydHome, 'live');
+  const out: string[] = [];
+  let dirs: string[];
+  try {
+    dirs = fs.readdirSync(root);
+  } catch {
+    return out;
+  }
+  for (const id of dirs) {
+    try {
+      const workspace = fs.readFileSync(path.join(root, id, 'workspace'), 'utf8');
+      if (liveSessions(belaydHome, workspace, now, windowMs).length > 0) out.push(workspace);
+    } catch {
+      // a project from before belayd kept its name, or one being written right now
+    }
+  }
+  return out.sort();
 }

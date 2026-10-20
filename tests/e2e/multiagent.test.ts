@@ -59,6 +59,37 @@ describe('several agents in one project at once', () => {
     expect(ask('agent-a', 'git stash')).not.toMatch(/uncommitted work/);
   });
 
+  it('shows who is working in the project, and the files two agents both changed', () => {
+    execFileSync('git', ['add', '.'], { cwd: sb.project });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], {
+      cwd: sb.project,
+    });
+    expect(belayd(sb, ['ps']).stdout).toMatch(/No agent has worked here/);
+    for (const [who, id, command, file] of [
+      ['agent-a', 'a1', 'echo A >> a.txt', 'a.txt'],
+      ['agent-b', 'b1', 'echo B >> shared.txt', 'shared.txt'],
+      ['agent-a', 'a2', 'echo A >> shared.txt', 'shared.txt'],
+    ] as const) {
+      hook(who, id, 'PreToolUse', command);
+      append(file, 'x\n');
+      hook(who, id, 'PostToolUse', command);
+    }
+
+    const out = belayd(sb, ['ps']).stdout;
+    expect(out).toMatch(/2 agents working/);
+    expect(out).toMatch(/agent-a[\s\S]*last\s+echo A >> shared\.txt/);
+    expect(out).toMatch(/changed\s+a\.txt, shared\.txt · not committed/);
+    expect(out).toMatch(/! shared\.txt was also changed by Claude Code agent-b/);
+    const json = JSON.parse(belayd(sb, ['ps', '--json']).stdout) as {
+      sessions: { session: string; files: { path: string; uncommitted: boolean }[] }[];
+    }[];
+    expect(json[0]!.sessions.map((s) => s.session).sort()).toEqual([
+      'claude-code:agent-a',
+      'claude-code:agent-b',
+    ]);
+    expect(belayd(sb, ['ps', '--all'], { cwd: sb.env.HOME! }).stdout).toMatch(/2 agents working/);
+  });
+
   it("undoes one agent's step without touching what another wrote at the same time", () => {
     // Both steps are running when both files change.
     hook('agent-a', 'a1', 'PreToolUse', 'echo A >> a.txt');

@@ -297,6 +297,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | `belayd approve` | Answer waiting requests in a live terminal console |
 | `belayd ui` | Open the local approval page |
 | `belayd log`, `belayd sessions` | What happened, newest last (`log --verify` checks the hash chain) |
+| `belayd ps` | Which agents are working in this project right now, what each is doing and what it has not committed (`--watch`, `--all`) |
 | `belayd replay [session]` | A session as a timeline, with the files each step changed |
 | `belayd undo [steps]`, `belayd redo` | Put files back, and take that back |
 | `belayd mcp` | Run an MCP server behind belayd, or wrap a config file |
