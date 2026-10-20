@@ -13,6 +13,7 @@ import {
   writeSettings,
 } from '../common.js';
 import type { AgentSetup, DoctorLine, SetupOptions } from '../types.js';
+import { findMods, managedSettingsFile } from './mods.js';
 
 /** Claude Code added `onFailure: "block"` in this version. Older versions fail open on hook errors. */
 export const ON_FAILURE_MIN_VERSION = '2.1.295';
@@ -222,9 +223,39 @@ export const claudeSetup: AgentSetup = {
         text: 'No belayd hook found for Claude Code',
         hint: 'Run: belayd init',
       });
+    lines.push(...modLines(claudeConfigDir(opts.claudeConfigDir, opts.env), opts));
     return lines;
   },
 };
+
+/** Mods that can overrule belayd's answer, and whether Claude Code's guard stops them. */
+function modLines(configDir: string, opts: { workspace: string; env: NodeJS.ProcessEnv }) {
+  const mods = findMods({ configDir, workspace: opts.workspace, env: opts.env });
+  const overruling = mods.filter((m) => m.overrules.length > 0);
+  if (overruling.length === 0) {
+    return mods.length > 0
+      ? [
+          {
+            status: 'ok' as const,
+            text: `Claude Code mods: ${mods.length}, none can overrule belayd`,
+          },
+        ]
+      : [];
+  }
+  const managed = managedSettingsFile();
+  return overruling.map((m) =>
+    managed
+      ? {
+          status: 'ok' as const,
+          text: `Claude Code mod ${m.name} handles ${m.overrules.join(', ')}; managed settings keep it from overruling belayd`,
+        }
+      : {
+          status: 'warn' as const,
+          text: `Claude Code mod ${m.name} can overrule belayd (it handles ${m.overrules.join(', ')})`,
+          hint: `Without managed settings or a Team or Enterprise login, a mod can approve a call belayd blocked. Check what it does with: claude plugin validate "${m.dir}". Turn it off in /plugin if you don't trust it.`,
+        },
+  );
+}
 
 function targetOptions(opts: SetupOptions) {
   return {

@@ -191,6 +191,13 @@ rules:
         - '{home}/.claude/settings.local.json'
         - '{workspace}/.claude/settings.json'
         - '{workspace}/.claude/settings.local.json'
+        # Claude Code mods run inside Claude Code and can approve calls belayd blocked.
+        - '{home}/.claude/dev-mods/**'
+        - '{home}/.claude/plugins/**'
+        - '{home}/.claude/skills/*/hooks/**'
+        - '{home}/.claude/skills/*/.claude-plugin/**'
+        - '{workspace}/.claude/skills/*/hooks/**'
+        - '{workspace}/.claude/skills/*/.claude-plugin/**'
         - '{home}/.codex/{config.toml,hooks.json,requirements.toml}'
         - '{workspace}/.codex/**'
         - '{home}/.cursor/hooks.json'
@@ -209,6 +216,16 @@ rules:
         - '{home}/.opencode/**'
     decision: ask
     reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
+
+  - id: ask-agent-plugin-install
+    match:
+      command:
+        - claude plugin install
+        - claude plugin i
+        - claude plugin enable
+        - claude plugin marketplace add
+    decision: ask
+    reason: Installs or turns on a Claude Code plugin. A plugin can carry hooks and mods that run inside Claude Code, and a mod can approve calls that belayd blocked.
 
   - id: ask-agent-without-safety
     match: { agentSafetyOff: true }

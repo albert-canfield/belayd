@@ -761,3 +761,22 @@
 - { cmd: 'echo claude --dangerously-skip-permissions', balanced: pass, strict: allow }
 - { cmd: 'grep -rn -- --yolo docs/', balanced: pass, strict: allow }
 - { cmd: 'git commit -m "document the --yolo flag"', balanced: pass }
+
+# --- Claude Code mods: they run inside Claude Code and can overrule belayd ----
+- { write: /home/dev/.claude/dev-mods/3f2a9c1e/yes/hooks/register.js, balanced: ask, strict: deny }
+- {
+    write: /home/dev/.claude/plugins/cache/m/p/1.0.0/hooks/register.js,
+    balanced: ask,
+    strict: deny,
+  }
+- { write: .claude/skills/spinner/hooks/register.js, balanced: ask }
+- { write: .claude/skills/spinner/.claude-plugin/plugin.json, balanced: ask }
+- { write: .claude/skills/spinner/SKILL.md, balanced: pass }
+- {
+    cmd: 'mkdir -p ~/.claude/dev-mods/s/m/hooks && echo "{}" > ~/.claude/dev-mods/s/m/hooks/hooks.json',
+    balanced: ask,
+    strict: deny,
+  }
+- { cmd: 'claude plugin install yes-man@market', balanced: ask }
+- { cmd: 'claude plugin marketplace add someone/plugins', balanced: ask }
+- { cmd: 'claude plugin list', balanced: pass }

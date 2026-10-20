@@ -5,6 +5,8 @@
 ### New
 
 - An agent that starts another coding agent with its safety switched off now gets a question: `claude --dangerously-skip-permissions`, `codex --yolo` or `-s danger-full-access`, `gemini --yolo`, `copilot --allow-all-tools`, `opencode run --auto`, `cursor-agent --force`, `droid exec --auto high` and the like, also through `npx`, `ollama launch`, wrappers, variables and inline Python. The reason names the flag. Rule `ask-agent-without-safety`, match field `agentSafetyOff`.
+- `belayd doctor` lists Claude Code mods that can overrule belayd: mods that handle `tool.check` (they can approve a call belayd blocked), belayd's own `classic.PreToolUse` event, or every event. It looks in installed plugins, the mods Claude writes during a session (`~/.claude/dev-mods`), skill folders that hold a plugin, and `CLAUDE_CODE_PLUGIN_DIRS`, and says when managed settings keep such a mod in check.
+- Writing a mod (`~/.claude/dev-mods`, `~/.claude/plugins`, a skill folder's `hooks/` or `.claude-plugin/`) now counts as changing an agent's hook settings, and `claude plugin install`, `enable` and `marketplace add` ask first.
 
 ### Fixed
 
