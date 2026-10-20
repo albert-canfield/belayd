@@ -17,12 +17,15 @@ export interface MatchEnv {
   sessionWrites: Set<string>;
   /** Lazily loaded values from the workspace `.env` files. */
   envValues(): Map<string, string>;
+  /** Another live agent's uncommitted work this subject would clobber, described. */
+  othersWork?: (s: Subject) => string | undefined;
 }
 
 export function createMatchEnv(
   ctx: ActionContext,
   belaydHome: string,
   sessionWrites: Set<string> = new Set(),
+  othersWork?: (s: Subject) => string | undefined,
 ): MatchEnv {
   let cached: Map<string, string> | undefined;
   return {
@@ -30,6 +33,7 @@ export function createMatchEnv(
     belaydHome,
     sessionWrites,
     envValues: () => (cached ??= loadEnvValues(ctx.workspace)),
+    ...(othersWork ? { othersWork } : {}),
   };
 }
 
@@ -90,6 +94,18 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
   if (m.changedScript !== undefined) {
     const hit = s.runs.find((r) => env.sessionWrites.has(r));
     if (Boolean(hit) !== m.changedScript) return no;
+    if (hit) return { matched: true, detail: hit };
+  }
+  if (m.othersWork !== undefined) {
+    // Untrusted policy code must never throw: a failed check counts as no clobber here,
+    // and the rule's other conditions still apply.
+    let hit: string | undefined;
+    try {
+      hit = env.othersWork?.(s);
+    } catch {
+      hit = undefined;
+    }
+    if (Boolean(hit) !== m.othersWork) return no;
     if (hit) return { matched: true, detail: hit };
   }
   if (m.agentSafetyOff !== undefined) {

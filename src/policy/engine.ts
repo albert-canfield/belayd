@@ -20,6 +20,8 @@ export interface EvaluateOptions {
   belaydHome: string;
   /** Files the agent changed earlier in this session. */
   sessionWrites?: Set<string>;
+  /** Another live agent's uncommitted work a subject would clobber (src/policy/clobber.ts). */
+  othersWork?: (s: Subject) => string | undefined;
 }
 
 export function evaluate(
@@ -29,7 +31,12 @@ export function evaluate(
   opts: EvaluateOptions,
 ): Decision {
   const subjects = buildSubjects(action, ctx, opts.sessionWrites);
-  const env = createMatchEnv(withFolders(ctx, policy), opts.belaydHome, opts.sessionWrites);
+  const env = createMatchEnv(
+    withFolders(ctx, policy),
+    opts.belaydHome,
+    opts.sessionWrites,
+    opts.othersWork,
+  );
   const results = subjects.map((s) => decideSubject(s, policy, env));
 
   if (results.length === 0) {
@@ -67,7 +74,12 @@ export function judgeSubjects(
   policy: CompiledPolicy,
   opts: EvaluateOptions,
 ): { subject: Subject; verdict: Verdict; rule?: LayeredRule }[] {
-  const env = createMatchEnv(withFolders(ctx, policy), opts.belaydHome, opts.sessionWrites);
+  const env = createMatchEnv(
+    withFolders(ctx, policy),
+    opts.belaydHome,
+    opts.sessionWrites,
+    opts.othersWork,
+  );
   return buildSubjects(action, ctx, opts.sessionWrites).map((subject) => {
     const r = decideSubject(subject, policy, env);
     return { subject, verdict: r.verdict, ...(r.rule ? { rule: r.rule } : {}) };
@@ -101,7 +113,8 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
     hit !== undefined &&
     hit.rule.decision !== 'deny' &&
     hit.rule.match.changedRunner === undefined &&
-    hit.rule.match.changedScript === undefined;
+    hit.rule.match.changedScript === undefined &&
+    hit.rule.match.othersWork === undefined;
   if (!hit || ownCode)
     return {
       verdict: policy.default,

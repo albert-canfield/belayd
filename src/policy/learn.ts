@@ -152,6 +152,7 @@ const UNSEEN: (keyof Match)[] = [
   'changedRunner',
   'changedScript',
   'secrets',
+  'othersWork',
 ];
 
 function learnableRule(rule: LayeredRule): boolean {

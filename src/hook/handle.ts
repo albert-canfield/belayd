@@ -3,6 +3,8 @@ import path from 'node:path';
 import { record, sessionKey, summarizeInput } from '../audit/record.js';
 import { maybeStartGc } from '../snapshots/retention.js';
 import { addSessionWrites, finishCall, sessionWrites, startCall } from '../audit/session.js';
+import { noteCall } from '../audit/live.js';
+import { makeClobberCheck } from '../policy/clobber.js';
 import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
 import { actionLabel } from '../policy/label.js';
@@ -80,12 +82,18 @@ export async function handleToolHook(
 
   if (input.phase === 'post' || input.phase === 'failed') {
     let snapshot: string | undefined;
+    // What the command itself says it changes: with several agents at work, only this is
+    // surely this agent's (a snapshot also sees what the others changed meanwhile).
+    let named: string[] = [];
+    let label: string | undefined;
     try {
       const action = dialect.toAction(input.tool, input.input, cwd);
+      label = actionLabel(action, workspace);
       const policy = await loadPolicy({ workspace, belaydHome: stateDir });
       // What the step wrote: what its command says, and what the snapshot saw change,
       // which also catches writes no command shows (`node -e`, `git apply`, `npm pkg set`).
       const written = buildSubjects(action, ctxBase).flatMap((s) => s.writes);
+      named = [...written];
       // Once a day, old snapshots are pruned in the background (snapshots.keep).
       const bin = process.argv[1];
       if (bin?.endsWith('bin.js'))
@@ -105,6 +113,12 @@ export async function handleToolHook(
     } catch {
       // recording the outcome matters more than the snapshot
     }
+    noteCall(stateDir, workspace, {
+      session,
+      agent,
+      writes: named,
+      ...(label ? { label } : {}),
+    });
     await record(stateDir, {
       session,
       phase: 'post',
@@ -171,6 +185,7 @@ export async function handleToolHook(
     const decision = evaluate(action, ctx, policy, {
       belaydHome: stateDir,
       sessionWrites: sessionWrites(stateDir, session),
+      othersWork: makeClobberCheck({ belaydHome: stateDir, workspace, session, cwd }),
     });
     const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
     const facts = {

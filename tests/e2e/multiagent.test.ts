@@ -32,6 +32,33 @@ const append = (file: string, text: string) => fs.appendFileSync(path.join(sb.pr
 const read = (file: string) => fs.readFileSync(path.join(sb.project, file), 'utf8');
 
 describe('several agents in one project at once', () => {
+  it("asks before one agent stashes another agent's uncommitted work", () => {
+    execFileSync('git', ['add', '.'], { cwd: sb.project });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], {
+      cwd: sb.project,
+    });
+    hook('agent-a', 'a1', 'PreToolUse', 'echo A >> a.txt');
+    append('a.txt', 'A\n');
+    hook('agent-a', 'a1', 'PostToolUse', 'echo A >> a.txt');
+
+    const ask = (who: string, command: string) =>
+      belayd(sb, ['hook', 'claude-code', '--timeout', '30'], {
+        input: JSON.stringify({
+          hook_event_name: 'PreToolUse',
+          session_id: who,
+          cwd: sb.project,
+          tool_name: 'Bash',
+          tool_use_id: `${who}-stash`,
+          tool_input: { command },
+        }),
+      }).stdout;
+    const theirs = ask('agent-b', 'git stash');
+    expect(theirs).toMatch(/"permissionDecision":\s*"ask"/);
+    expect(theirs).toMatch(/this would stash uncommitted work: Claude Code changed a\.txt/);
+    // The agent that made the change can stash it.
+    expect(ask('agent-a', 'git stash')).not.toMatch(/uncommitted work/);
+  });
+
   it("undoes one agent's step without touching what another wrote at the same time", () => {
     // Both steps are running when both files change.
     hook('agent-a', 'a1', 'PreToolUse', 'echo A >> a.txt');

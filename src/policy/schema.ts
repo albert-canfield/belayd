@@ -32,6 +32,8 @@ export const MatchSchema = z
     changedScript: z.boolean().optional(),
     /** Starts a coding agent with its own safety switched off (`claude --dangerously-skip-permissions`). */
     agentSafetyOff: z.boolean().optional(),
+    /** Would overwrite, throw away, stash or commit another live agent's uncommitted work. */
+    othersWork: z.boolean().optional(),
   })
   .strict();
 
