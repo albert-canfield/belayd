@@ -1,37 +1,46 @@
 name: Release
 
-# Runs only when a maintainer pushes a version tag such as v0.1.0.
+# Runs when a maintainer pushes a version tag such as v0.1.0, or by hand for a tag that
+# already exists (when a publish failed and the tag should not move).
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing tag to publish, for example v0.3.0
+        required: true
 
 permissions:
   contents: write
-  id-token: write # npm provenance
+  id-token: write # npm trusted publishing and provenance: no token to leak or expire
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
       - run: pnpm build
       - name: Tag matches package.json
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+        run: test "v$(node -p "require('./package.json').version")" = "$TAG"
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release with the changelog section
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           awk -v v="$version" '$0 ~ "^## "v {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "belayd $GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "$TAG" --title "belayd $TAG" --notes-file notes.md
