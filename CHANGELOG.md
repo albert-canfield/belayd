@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-20)
+
+Several agents in one project, safely: belayd now stops one agent from wrecking another's uncommitted work, shows who is working where, and asks when an agent starts another one with its safety off. Also a security fix (update soon if you use 0.3.0), OpenCode 2 support and much cheaper snapshots in big projects.
+
+Upgrading: if you use OpenCode, run `belayd init --agent opencode` again. OpenCode 2 does not run the old plugin.
 
 ### New
 
@@ -14,9 +18,9 @@
 
 ### Fixed
 
+- Security: a repository with its own `.git/config` could make belayd run a command. To decide whether a script is committed, belayd ran `git status` in the project, and Git runs a `core.fsmonitor` command, filter drivers and some hooks named in that repository's config. belayd now runs Git in your projects with all three switched off, and without the `GIT_*` variables it inherited. `belayd init` and the Gemini setup used the same unsafe call. Affects 0.3.0 (checking scripts) and every version for `init`.
 - A Git repository inside the project with no commit yet (a fresh `git init` in a subfolder) made every snapshot fail, so undo was off until that repository got a commit. Snapshots now leave it out and keep the rest.
 - Snapshots are much cheaper in big projects: the first snapshot of a 30,000-file project went from over 20 seconds to about 4, and from 132 MB on disk to 19 MB. A step that changes files there costs about a third less, and files too big to keep no longer count as changed every time.
-- Security: a repository with its own `.git/config` could make belayd run a command. To decide whether a script is committed, belayd ran `git status` in the project, and Git runs a `core.fsmonitor` command, filter drivers and some hooks named in that repository's config. belayd now runs Git in your projects with all three switched off, and without the `GIT_*` variables it inherited. `belayd init` and the Gemini setup used the same unsafe call. Affects 0.3.0 (checking scripts) and every version for `init`.
 
 ## 0.3.0 (2026-10-19)
 
