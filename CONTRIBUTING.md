@@ -50,8 +50,13 @@ Tests never write to your real agent configuration. The end-to-end tests run the
 | `src/integrations/mcp/` | The MCP gateway |
 | `src/approval/` | Held calls, the terminal console and the local web page |
 | `src/audit/` | The append-only log |
-| `src/snapshots/` | Shadow repository snapshots, undo and redo |
-| `docs/` | Research, the plan, and the integration notes per agent |
+| `src/snapshots/` | Shadow repository snapshots, undo and redo, and their retention |
+| `src/secrets/` | Recognising secrets in files and in outgoing data |
+| `src/scan/` | Reading past tool calls from the agents' own history for `belayd scan` |
+| `src/cli/` | Every command except `belayd hook` |
+| `src/util/` | Path and file helpers shared by everything above |
+| `tests/differential/` | The test that runs commands in real bash and compares |
+| `docs/` | Research, the plan and roadmap, and the integration notes per agent |
 
 ## Add an agent
 
@@ -63,6 +68,18 @@ Every agent is one adapter in `src/agents/<id>/` and one entry in `src/agents/re
 4. Add the entry to the registry. `tests/agents/conformance.test.ts` then runs the same checks against it as against every other agent: it must block `rm -rf ~`, stay quiet for `npm test`, block on input it cannot read, never let a question through unanswered, and record what ran.
 5. If the agent cannot show a prompt from a hook, answer `false` from `canAskNatively`: belayd then holds the call and asks the person itself. If a hook timeout lets the tool run, keep the hook's `--timeout` below the agent's limit so belayd answers first.
 6. Try it in a real session, with a throwaway config folder, before calling it supported.
+
+## Releasing
+
+Releases are cut by the maintainer. Every release brings the docs in line with the code, not only the changelog:
+
+1. `CHANGELOG.md` gets a dated section for the version.
+2. `README.md` describes what the release can do: features, the commands table, the supported agents table, limits, and the action pinned to the new tag. Every claim has to be something a reader can try.
+3. `docs/plan.md` gets the release in its table, and its roadmap and the README's "What's next" move on to the next version.
+4. `SECURITY.md` covers anything the release changes in the threat model, `docs/integrations.md` anything new about an agent's hooks, and this file any new source folder.
+5. `tests/docs.test.ts` checks the mechanical parts. The rest is read by a person.
+
+Then bump `package.json`, wait for CI to pass on `main`, and push the tag `vX.Y.Z`. The release workflow publishes to npm with trusted publishing (no token) and provenance, and creates the GitHub release from the changelog section.
 
 ## Style
 
