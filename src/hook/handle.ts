@@ -14,7 +14,13 @@ import type { ActionContext } from '../policy/types.js';
 import { capture } from '../snapshots/capture.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 import type { HookResult } from './types.js';
-import { startWatchdog } from './watchdog.js';
+import {
+  checkDeadlineMs,
+  DEFAULT_TIMEOUT_SEC,
+  HANG_MESSAGE,
+  startWatchdog,
+  type Watchdog,
+} from './watchdog.js';
 
 export interface HandleDeps {
   env: NodeJS.ProcessEnv;
@@ -24,14 +30,12 @@ export interface HandleDeps {
   binPath?: string;
   /** The `--event` the hook was installed with, for agents whose payload does not say. */
   event?: string;
+  /** The watchdog `belayd hook` started before loading the check. Without one, the check starts its own. */
+  watchdog?: Watchdog;
 }
 
-/** Older installs used a 30 second hook timeout and did not pass --timeout. */
-const DEFAULT_TIMEOUT_SEC = 30;
 /** Answer this long before the agent would give up on the hook. */
 const SAFETY_MARGIN_MS = 5000;
-/** Checking a call takes milliseconds. Past this, something is stuck and the call is blocked. */
-const CHECK_DEADLINE_MS = 20_000;
 
 export async function handleToolHook(
   raw: string,
@@ -164,11 +168,13 @@ export async function handleToolHook(
     });
 
   const timeoutMs = (deps.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
-  const watchdog = startWatchdog(
-    Math.min(CHECK_DEADLINE_MS, timeoutMs / 2),
-    'belayd took too long to check this call, so it is blocked. Ask the user to run `belayd doctor`.',
-    path.join(stateDir, 'errors.log'),
-  );
+  const watchdog =
+    deps.watchdog ??
+    startWatchdog(
+      checkDeadlineMs(deps.timeoutSec),
+      HANG_MESSAGE,
+      path.join(stateDir, 'errors.log'),
+    );
   let failMode: 'open' | 'closed' = 'closed';
   try {
     const ctx: ActionContext = {

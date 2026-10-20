@@ -1,4 +1,4 @@
-import { handleToolHook, type HandleDeps } from '../../hook/handle.js';
+import type { HandleDeps } from '../../hook/handle.js';
 import type { HookResult } from '../../hook/types.js';
 import type { Action } from '../../policy/types.js';
 import { claudeDialect, preToolUseDecision, readPreToolUseDecision } from '../claude-code/hook.js';
@@ -39,7 +39,9 @@ export const codexDialect: Dialect = {
   verdictOf: readPreToolUseDecision,
 };
 
-export function handleCodex(raw: string, deps: HandleDeps): Promise<HookResult> {
+/** Loads the checking code only when called, so `belayd hook` can read the dialect cheaply. */
+export async function handleCodex(raw: string, deps: HandleDeps): Promise<HookResult> {
+  const { handleToolHook } = await import('../../hook/handle.js');
   return handleToolHook(raw, deps, codexDialect);
 }
 
