@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { untrustedGit } from '../util/git.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -108,7 +108,7 @@ export function excludeFromGit(workspace: string, file: string): boolean {
   if (!fs.existsSync(gitDir) || !fs.statSync(gitDir).isDirectory()) return false;
   const rel = path.relative(workspace, file).split(path.sep).join('/');
   try {
-    execFileSync('git', ['check-ignore', '-q', rel], { cwd: workspace, stdio: 'ignore' });
+    untrustedGit(['check-ignore', '-q', rel], { cwd: workspace });
     return false; // already ignored
   } catch {
     // not ignored yet

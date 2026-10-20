@@ -6,6 +6,10 @@
 
 - An agent that starts another coding agent with its safety switched off now gets a question: `claude --dangerously-skip-permissions`, `codex --yolo` or `-s danger-full-access`, `gemini --yolo`, `copilot --allow-all-tools`, `opencode run --auto`, `cursor-agent --force`, `droid exec --auto high` and the like, also through `npx`, `ollama launch`, wrappers, variables and inline Python. The reason names the flag. Rule `ask-agent-without-safety`, match field `agentSafetyOff`.
 
+### Fixed
+
+- Security: a repository with its own `.git/config` could make belayd run a command. To decide whether a script is committed, belayd ran `git status` in the project, and Git runs a `core.fsmonitor` command, filter drivers and some hooks named in that repository's config. belayd now runs Git in your projects with all three switched off, and without the `GIT_*` variables it inherited. `belayd init` and the Gemini setup used the same unsafe call. Affects 0.3.0 (checking scripts) and every version for `init`.
+
 ## 0.3.0 (2026-10-19)
 
 Quieter on real work, and safe to undo when several agents share a project. No new misses in the differential test.

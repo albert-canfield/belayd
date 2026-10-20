@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import picomatch from 'picomatch';
 import { canonicalPath } from '../util/paths.js';
 import { readRegularFile } from '../util/files.js';
+import { untrustedGit } from '../util/git.js';
 import { analyzeShell, programName, resolveIn, type Invocation } from './shell.js';
 import type { Action, ActionContext, ActionKind } from './types.js';
 import { safetyOff } from './unguarded.js';
@@ -328,8 +328,7 @@ export function committedUnchanged(file: string): boolean {
   let known = committed.get(file);
   if (known !== undefined) return known;
   try {
-    const out = execFileSync(
-      'git',
+    const out = untrustedGit(
       [
         'status',
         '--porcelain=v1',
@@ -338,12 +337,7 @@ export function committedUnchanged(file: string): boolean {
         '--',
         path.basename(file),
       ],
-      {
-        cwd: path.dirname(file),
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 2000,
-      },
+      { cwd: path.dirname(file) },
     );
     // A committed symlink can point at a file that is not: only a regular file counts.
     known = out.trim() === '' && fs.lstatSync(file).isFile();

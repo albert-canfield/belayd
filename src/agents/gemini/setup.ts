@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { untrustedGit } from '../../util/git.js';
 import os from 'node:os';
 import path from 'node:path';
 import { removeMatcherHooks } from '../claude-code/setup.js';
@@ -103,9 +103,8 @@ export const geminiSetup: AgentSetup = {
 
 function trackedByGit(workspace: string, file: string): boolean {
   try {
-    execFileSync('git', ['ls-files', '--error-unmatch', path.relative(workspace, file)], {
+    untrustedGit(['ls-files', '--error-unmatch', path.relative(workspace, file)], {
       cwd: workspace,
-      stdio: 'ignore',
     });
     return true;
   } catch {
