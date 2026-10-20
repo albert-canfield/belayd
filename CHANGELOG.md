@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A Git repository inside the project with no commit yet (a fresh `git init` in a subfolder) made every snapshot fail, so undo was off until that repository got a commit. Snapshots now leave it out and keep the rest.
+- Snapshots are much cheaper in big projects: the first snapshot of a 30,000-file project went from over 20 seconds to about 4, and from 132 MB on disk to 19 MB. A step that changes files there costs about a third less, and files too big to keep no longer count as changed every time.
 - Security: a repository with its own `.git/config` could make belayd run a command. To decide whether a script is committed, belayd ran `git status` in the project, and Git runs a `core.fsmonitor` command, filter drivers and some hooks named in that repository's config. belayd now runs Git in your projects with all three switched off, and without the `GIT_*` variables it inherited. `belayd init` and the Gemini setup used the same unsafe call. Affects 0.3.0 (checking scripts) and every version for `init`.
 
 ## 0.3.0 (2026-10-19)

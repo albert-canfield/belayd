@@ -467,6 +467,9 @@ export class Shadow {
   private addPaths(paths: string[], opts: { listedByStatus?: boolean } = {}): void {
     // A file reached through a symlinked folder is not in the project any more.
     const links = new Map<string, boolean | undefined>();
+    // A repository inside the project with no commit yet makes `git add` fail for the
+    // whole batch ("does not have a commit checked out"). Git cannot record it anyway.
+    paths = paths.filter((p) => !(p.endsWith('/') && noCommitYet(path.join(this.workspace, p))));
     const present = paths.filter(
       (p) => !this.beyondSymlink(p, links) && exists(path.join(this.workspace, p)),
     );
@@ -709,6 +712,30 @@ function signature(file: string, before?: number): string | undefined {
   if (before !== undefined && (Number(st.mtimeMs) >= before || Number(st.ctimeMs) >= before))
     return undefined;
   return `${st.size}:${st.ino}:${st.mtimeNs}:${st.ctimeNs}`;
+}
+
+/**
+ * True for a folder holding a Git repository whose HEAD names no commit yet. Read from
+ * the files, without running Git in a repository belayd does not own.
+ */
+function noCommitYet(dir: string): boolean {
+  const gitDir = path.join(dir, '.git');
+  try {
+    // A .git file (a submodule or worktree) points elsewhere; those have commits.
+    if (!fs.lstatSync(gitDir).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  try {
+    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const ref = /^ref: (refs\/\S+)$/.exec(head)?.[1];
+    if (!ref) return !/^[0-9a-f]{40,64}$/.test(head);
+    if (fs.existsSync(path.join(gitDir, ref))) return false;
+    const packed = fs.readFileSync(path.join(gitDir, 'packed-refs'), 'utf8');
+    return !packed.split('\n').some((line) => line.endsWith(` ${ref}`));
+  } catch {
+    return true;
+  }
 }
 
 /** Exists without following a final symlink (a dangling link still exists). */

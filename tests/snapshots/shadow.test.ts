@@ -171,3 +171,16 @@ it('keeps what status learns, so a touched file is not read again on every snaps
   // Status found the file unchanged and saved its new stat data in our index.
   expect(index().equals(before)).toBe(false);
 });
+
+describe('a Git repository inside the project', () => {
+  it('without a commit yet, does not stop snapshots of the rest', () => {
+    put('a.txt', 'one\n');
+    execFileSync('git', ['init', '-q', path.join(ws, 'fresh')]);
+    put('fresh/notes.md', 'draft\n');
+    const shadow = new Shadow(path.join(dir, 'bh'), ws);
+    expect(() => shadow.snapshotAll()).not.toThrow();
+    put('a.txt', 'two\n');
+    const next = shadow.snapshotAll();
+    expect(next.changed).toContain('a.txt');
+  });
+});
