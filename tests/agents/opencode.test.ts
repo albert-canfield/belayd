@@ -2,13 +2,19 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   OPENCODE_MARK,
   opencodeDialect,
   toOpencodeAction,
 } from '../../src/agents/opencode/hook.js';
-import { opencodeConfigDir, opencodeSetup, pluginSource } from '../../src/agents/opencode/setup.js';
+import {
+  opencodeConfigDir,
+  opencodeSetup,
+  opencodeTarget,
+  pluginSource,
+} from '../../src/agents/opencode/setup.js';
 import { handleToolHook } from '../../src/hook/handle.js';
 
 let dir: string;
@@ -143,15 +149,99 @@ describe('OpenCode setup', () => {
     expect(fs.readFileSync(backup!, 'utf8')).toContain('Mine');
   });
 
+  it('warns about an OpenCode too old for the plugin, and a plugin OpenCode 2 would skip', () => {
+    fs.writeFileSync(path.join(dir, 'bin.js'), '');
+    opencodeSetup.plan(opts(false)).apply();
+    const old = { ...opts(false), env: { ...opts(false).env, BELAYD_OPENCODE_VERSION: '1.18.3' } };
+    expect(opencodeSetup.doctor(old).some((l) => /older than 1\.18\.29/.test(l.text))).toBe(true);
+    const fine = { ...opts(false), env: { ...opts(false).env, BELAYD_OPENCODE_VERSION: '2.1.1' } };
+    expect(opencodeSetup.doctor(fine).some((l) => /older than/.test(l.text))).toBe(false);
+    const file = opencodeTarget({ workspace: opts(false).workspace, env: opts(false).env }).file;
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('async server(', 'async old('));
+    expect(opencodeSetup.doctor(fine).some((l) => /OpenCode 2 does not run it/.test(l.text))).toBe(
+      true,
+    );
+  });
+
   it('reports a plugin whose paths no longer exist', () => {
     opencodeSetup.plan(opts(false)).apply();
     expect(opencodeSetup.doctor(opts(false))[0]).toMatchObject({ status: 'fail' });
   });
 
-  it('exports nothing but the plugin, as OpenCode requires', () => {
+  it('exports one default and nothing else: OpenCode 1 rejects any export that is not a function', () => {
     const exports = [
-      ...pluginSource({ nodePath: '/n', binPath: '/b' }).matchAll(/^export (\w+ \w+)/gm),
+      ...pluginSource({ nodePath: '/n', binPath: '/b' }).matchAll(/^export (\w+)/gm),
     ];
-    expect(exports.map((m) => m[1])).toEqual(['const Belayd']);
+    expect(exports.map((m) => m[1])).toEqual(['default']);
+  });
+
+  describe('the plugin as OpenCode 1 and OpenCode 2 load it', () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'belayd-ocplugin-'));
+      // A stand-in belayd that says no to everything.
+      fs.writeFileSync(
+        path.join(dir, 'no.mjs'),
+        "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ decision: 'deny', reason: 'nope' })));",
+      );
+      fs.writeFileSync(
+        path.join(dir, 'belayd.mjs'),
+        pluginSource({ nodePath: process.execPath, binPath: path.join(dir, 'no.mjs') }),
+      );
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const load = async () =>
+      (await import(`${pathToFileURL(path.join(dir, 'belayd.mjs')).href}?${Math.random()}`)) as {
+        default: Record<string, unknown>;
+      };
+
+    it('OpenCode 1: server() returns tool hooks that block on a no', async () => {
+      const plugin = (await load()).default;
+      expect(plugin.id).toBe('belayd');
+      type Hook = (a: object, b: object) => Promise<void>;
+      const server = plugin.server as (i: object) => Promise<Record<string, Hook>>;
+      const hooks = await server({ directory: dir });
+      await expect(
+        hooks['tool.execute.before']!(
+          { tool: 'bash', sessionID: 's', callID: 'c' },
+          { args: { command: 'ls' } },
+        ),
+      ).rejects.toThrow('nope');
+    });
+
+    it('OpenCode 2: setup() hooks execute.before, which blocks on a no', async () => {
+      // OpenCode 2 provides @opencode/plugin; this stand-in records what define() got.
+      const pkg = path.join(dir, 'node_modules', '@opencode', 'plugin');
+      fs.mkdirSync(pkg, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkg, 'package.json'),
+        JSON.stringify({ name: '@opencode/plugin', type: 'module', exports: './index.js' }),
+      );
+      fs.writeFileSync(
+        path.join(pkg, 'index.js'),
+        'export const Plugin = { define: (d) => ({ ...d, defined: true }) };',
+      );
+      const plugin = (await load()).default as {
+        defined?: boolean;
+        setup: (ctx: object) => Promise<void>;
+      };
+      expect(plugin.defined).toBe(true);
+      const hooks = new Map<string, (e: object) => Promise<void>>();
+      await plugin.setup({
+        location: { directory: dir },
+        tool: {
+          hook: async (name: string, fn: (e: object) => Promise<void>) => void hooks.set(name, fn),
+        },
+      });
+      expect([...hooks.keys()]).toEqual(['execute.before', 'execute.after']);
+      await expect(
+        hooks.get('execute.before')!({
+          tool: 'shell',
+          sessionID: 's',
+          id: 'c',
+          input: { command: 'ls' },
+        }),
+      ).rejects.toThrow('nope');
+    });
   });
 });

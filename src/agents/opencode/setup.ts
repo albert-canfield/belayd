@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,46 +79,68 @@ function belayd(payload, seconds) {
   });
 }
 
-export const Belayd = async ({ directory }) => ({
-  'tool.execute.before': async (input, output) => {
-    const r = await belayd(
-      {
-        source: MARK,
-        event: 'before',
-        tool: input.tool,
-        sessionID: input.sessionID,
-        callID: input.callID,
-        directory,
-        args: output.args,
-      },
-      ${OPENCODE_HOOK_TIMEOUT_SECONDS},
-    );
-    if (r.code !== 0) throw new Error(\`\${BROKEN} \${r.stderr.trim().slice(0, 300)}\`.trim());
-    if (r.stdout.trim() === '') return;
-    let answer;
-    try {
-      answer = JSON.parse(r.stdout);
-    } catch {
-      throw new Error(BROKEN);
-    }
-    if (answer.decision !== 'allow') throw new Error(answer.reason || 'Blocked by belayd.');
+async function before(tool, sessionID, callID, directory, args) {
+  const r = await belayd(
+    { source: MARK, event: 'before', tool, sessionID, callID, directory, args },
+    ${OPENCODE_HOOK_TIMEOUT_SECONDS},
+  );
+  if (r.code !== 0) throw new Error(\`\${BROKEN} \${r.stderr.trim().slice(0, 300)}\`.trim());
+  if (r.stdout.trim() === '') return;
+  let answer;
+  try {
+    answer = JSON.parse(r.stdout);
+  } catch {
+    throw new Error(BROKEN);
+  }
+  if (answer.decision !== 'allow') throw new Error(answer.reason || 'Blocked by belayd.');
+}
+
+// Records what ran and snapshots the files it changed. Never fails the tool.
+async function after(tool, sessionID, callID, directory, args) {
+  await belayd(
+    { source: MARK, event: 'after', tool, sessionID, callID, directory, args },
+    ${POST_TIMEOUT_SECONDS},
+  );
+}
+
+function hooks(directory) {
+  return {
+    'tool.execute.before': async (input, output) =>
+      before(input.tool, input.sessionID, input.callID, directory, output.args),
+    'tool.execute.after': async (input) =>
+      after(input.tool, input.sessionID, input.callID, directory, input.args),
+  };
+}
+
+// OpenCode 2 runs setup(); OpenCode 1 (1.18.29 and later) runs server(). OpenCode 2 does
+// not run OpenCode 1 plugins, and OpenCode 1 rejects a file whose exports are not all
+// functions, so one default export carries both. The plugin API comes with OpenCode 2.
+let v2 = {};
+try {
+  const { Plugin } = await import('@opencode/plugin');
+  v2 = Plugin.define({
+    id: 'belayd',
+    async setup(ctx) {
+      const directory = ctx.location?.directory ?? process.cwd();
+      await ctx.tool.hook('execute.before', (event) =>
+        before(event.tool, event.sessionID, event.id, directory, event.input),
+      );
+      await ctx.tool.hook('execute.after', (event) =>
+        after(event.tool, event.sessionID, event.id, directory, event.input),
+      );
+    },
+  });
+} catch {
+  // OpenCode 1 without the OpenCode 2 plugin API
+}
+
+export default {
+  id: 'belayd',
+  ...v2,
+  async server({ directory }) {
+    return hooks(directory);
   },
-  'tool.execute.after': async (input) => {
-    // Records what ran and snapshots the files it changed. Never fails the tool.
-    await belayd(
-      {
-        source: MARK,
-        event: 'after',
-        tool: input.tool,
-        sessionID: input.sessionID,
-        callID: input.callID,
-        directory,
-        args: input.args,
-      },
-      ${POST_TIMEOUT_SECONDS},
-    );
-  },
-});
+};
 `;
 }
 
@@ -200,7 +223,8 @@ export const opencodeSetup: AgentSetup = {
     ]) {
       if (!ours(file)) continue;
       installed++;
-      const missing = pinned(fs.readFileSync(file, 'utf8')).filter((p) => !fs.existsSync(p));
+      const source = fs.readFileSync(file, 'utf8');
+      const missing = pinned(source).filter((p) => !fs.existsSync(p));
       lines.push(
         missing.length > 0
           ? {
@@ -208,9 +232,22 @@ export const opencodeSetup: AgentSetup = {
               text: `OpenCode plugin in ${tilde(file)} points to files that no longer exist`,
               hint: `${missing.join(', ')}. Every tool call is being blocked. Run belayd init --agent opencode again.`,
             }
-          : { status: 'ok', text: `OpenCode plugin installed in ${tilde(file)}` },
+          : !source.includes('async server(')
+            ? {
+                status: 'warn',
+                text: `OpenCode plugin in ${tilde(file)} is from an older belayd, and OpenCode 2 does not run it`,
+                hint: 'Run belayd init --agent opencode again: the new plugin works with OpenCode 1 and 2.',
+              }
+            : { status: 'ok', text: `OpenCode plugin installed in ${tilde(file)}` },
       );
     }
+    const version = opencodeVersion(opts.env);
+    if (version && olderThan(version, PLUGIN_MIN_VERSION))
+      lines.push({
+        status: 'warn',
+        text: `OpenCode ${version} is older than ${PLUGIN_MIN_VERSION} and does not load belayd's plugin`,
+        hint: 'belayd is off in OpenCode until you update it.',
+      });
     if (installed === 0)
       lines.push({
         status: 'warn',
@@ -220,6 +257,32 @@ export const opencodeSetup: AgentSetup = {
     return lines;
   },
 };
+
+/** The first OpenCode 1 that loads a plugin's `server()`, the form that also works in OpenCode 2. */
+const PLUGIN_MIN_VERSION = '1.18.29';
+
+/** `opencode --version`, or undefined when it is not on PATH. */
+export function opencodeVersion(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.BELAYD_OPENCODE_VERSION) return env.BELAYD_OPENCODE_VERSION;
+  try {
+    const out = execFileSync('opencode', ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env,
+    });
+    return /(\d+\.\d+\.\d+)/.exec(out)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function olderThan(version: string, min: string): boolean {
+  const a = version.split('.').map(Number);
+  const b = min.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) < (b[i] ?? 0);
+  return false;
+}
 
 function targetOptions(opts: SetupOptions) {
   return { ...(opts.global ? { global: true } : {}), workspace: opts.workspace, env: opts.env };

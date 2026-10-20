@@ -211,7 +211,7 @@ A learned rule matches that exact command, word for word, touching the same path
 | Gemini CLI | ✓ | `belayd approve` or the web page | ✓ | ✓ | Gemini CLI hooks (`BeforeTool`, `AfterTool`) |
 | Claude desktop app | ✓ (not tried in a live session) | Claude Code's prompt | ✓ | ✓ | Its coding sessions run Claude Code's hooks |
 | ChatGPT desktop app | ✓ (not tried in a live session) | `belayd approve` or the web page | ✓ | ✓ | Its Codex agent runs Codex's hooks from `~/.codex` |
-| OpenCode | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | A belayd plugin in `.opencode/plugins/` (`tool.execute.before` and `after`) |
+| OpenCode | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | A belayd plugin in `.opencode/plugins/` that works in OpenCode 2 and in OpenCode 1 from 1.18.29 |
 | Antigravity CLI | Planned | | | | |
 <!-- agents:end -->
 

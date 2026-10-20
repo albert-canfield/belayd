@@ -6,8 +6,10 @@ import type { Answer, Dialect } from '../types.js';
 
 /**
  * OpenCode has no command hooks. It runs JavaScript plugins, so belayd installs a small
- * one (see setup.ts) whose `tool.execute.before` and `tool.execute.after` hooks send
- * each call here as JSON and wait for the answer. Facts from the 1.19 source:
+ * one (see setup.ts) whose tool hooks send each call here as JSON and wait for the
+ * answer: `tool.execute.before` and `after` in OpenCode 1, `execute.before` and `after`
+ * in OpenCode 2, which passes the same fields under other names (event.input, event.id).
+ * Facts from the 1.19 source:
  *
  * - `before` gets `{ tool, sessionID, callID }` and `{ args }`. Throwing blocks the call
  *   and the error message is what the model sees. There is no timeout, so the plugin
@@ -61,9 +63,15 @@ export const opencodeDialect: Dialect = {
   },
 };
 
-/** OpenCode's own tools, which never contain an underscore except apply_patch. */
+/**
+ * OpenCode's own tools, which never contain an underscore except apply_patch. OpenCode 2
+ * renamed bash to shell, apply_patch to patch and task to subagent; the inputs are the same.
+ */
 const BUILT_IN = new Set([
   'bash',
+  'shell',
+  'patch',
+  'subagent',
   'read',
   'write',
   'edit',
@@ -92,7 +100,8 @@ export function toOpencodeAction(
   const str = (key: string) =>
     typeof input[key] === 'string' ? (input[key] as string) : undefined;
   switch (tool) {
-    case 'bash': {
+    case 'bash':
+    case 'shell': {
       const command = str('command');
       const dir = str('workdir');
       // The command runs in workdir when it is given.
@@ -118,7 +127,8 @@ export function toOpencodeAction(
         };
       break;
     }
-    case 'apply_patch': {
+    case 'apply_patch':
+    case 'patch': {
       const files = parseApplyPatch(str('patchText') ?? '');
       if (files.length > 0) return { kind: 'patch', files };
       // A patch belayd cannot read could touch any file: code it cannot see, as for Codex.
@@ -139,7 +149,8 @@ export function toOpencodeAction(
     }
   }
   // MCP tools are named `<server>_<tool>`, with both parts cleaned to [A-Za-z0-9_-].
-  if (!BUILT_IN.has(tool)) {
+  // OpenCode 2's own tools (opencode_session_rename, opencode_worktree_list) are not MCP.
+  if (!BUILT_IN.has(tool) && !tool.startsWith('opencode_')) {
     const cut = tool.indexOf('_');
     if (cut > 0)
       return { kind: 'mcp', server: tool.slice(0, cut), tool: tool.slice(cut + 1), args: input };

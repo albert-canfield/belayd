@@ -19,10 +19,11 @@ async function loadPlugin(file: string): Promise<Hooks> {
   const saved = { ...process.env };
   Object.assign(process.env, sb.env);
   try {
+    // OpenCode 1 calls the default export's server(); OpenCode 2 its setup().
     const mod = (await import(`${pathToFileURL(file).href}?t=${Date.now()}`)) as {
-      Belayd: (ctx: { directory: string }) => Promise<Hooks>;
+      default: { server: (ctx: { directory: string }) => Promise<Hooks> };
     };
-    return await mod.Belayd({ directory: sb.project });
+    return await mod.default.server({ directory: sb.project });
   } finally {
     process.env = saved;
   }
