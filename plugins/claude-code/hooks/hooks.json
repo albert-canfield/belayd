@@ -1,0 +1,41 @@
+{
+  "description": "belayd checks each tool call before it runs and records what it changed",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/belayd-hook\" --prepare",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/belayd-hook\" claude-code --timeout 180",
+            "timeout": 180,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/belayd-hook\" claude-code --timeout 30",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -217,16 +217,41 @@ export const claudeSetup: AgentSetup = {
       missingHint: 'Run belayd init again.',
     });
     lines.push(...files);
-    if (installed === 0)
+    const plugin = belaydPlugin(claudeConfigDir(opts.claudeConfigDir, opts.env));
+    if (plugin) {
+      lines.push(
+        installed > 0
+          ? {
+              status: 'warn',
+              text: `Claude Code has both the ${plugin} plugin and belayd hooks in its settings`,
+              hint: 'Every tool call is checked twice. Keep one: belayd uninstall, or turn the plugin off in /plugin.',
+            }
+          : { status: 'ok', text: `Claude Code: the ${plugin} plugin is on` },
+      );
+    } else if (installed === 0)
       lines.push({
         status: 'warn',
         text: 'No belayd hook found for Claude Code',
-        hint: 'Run: belayd init',
+        hint: 'Run: belayd init, or in Claude Code: /plugin install belayd --marketplace albert-canfield/belayd',
       });
     lines.push(...modLines(claudeConfigDir(opts.claudeConfigDir, opts.env), opts));
     return lines;
   },
 };
+
+/** The belayd plugin's id when it is turned on in Claude Code's user settings. */
+function belaydPlugin(configDir: string): string | undefined {
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(configDir, 'settings.json'), 'utf8')) as {
+      enabledPlugins?: Record<string, unknown>;
+    };
+    return Object.entries(settings.enabledPlugins ?? {}).find(
+      ([id, on]) => id.startsWith('belayd@') && on === true,
+    )?.[0];
+  } catch {
+    return undefined;
+  }
+}
 
 /** Mods that can overrule belayd's answer, and whether Claude Code's guard stops them. */
 function modLines(configDir: string, opts: { workspace: string; env: NodeJS.ProcessEnv }) {

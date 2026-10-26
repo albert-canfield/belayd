@@ -32,6 +32,14 @@ describe('docs match the current version', () => {
     for (const pin of pins) expect(pin).toBe(version);
   });
 
+  it('the Claude Code plugin installs this version', () => {
+    const plugin = JSON.parse(read('plugins/claude-code/.claude-plugin/plugin.json')) as {
+      version: string;
+    };
+    expect(plugin.version).toBe(version);
+    expect(read('plugins/claude-code/bin/belayd-hook')).toContain(`VERSION=${version}\n`);
+  });
+
   it('the plan lists it among the releases', () => {
     expect(plan).toContain(`| ${version} |`);
   });

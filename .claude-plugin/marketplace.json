@@ -1,0 +1,11 @@
+{
+  "name": "belayd",
+  "owner": { "name": "Albert Canfield" },
+  "plugins": [
+    {
+      "name": "belayd",
+      "source": "./plugins/claude-code",
+      "description": "Checks every Claude Code tool call before it runs, asks about the risky ones, and lets you undo what an agent changed."
+    }
+  ]
+}

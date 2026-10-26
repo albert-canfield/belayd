@@ -1,0 +1,9 @@
+{
+  "name": "belayd",
+  "version": "0.4.0",
+  "description": "Checks every tool call before it runs, asks about the risky ones, keeps an audit log, and lets you undo what an agent changed.",
+  "author": { "name": "Albert Canfield" },
+  "homepage": "https://github.com/albert-canfield/belayd",
+  "repository": "https://github.com/albert-canfield/belayd",
+  "license": "MIT"
+}
