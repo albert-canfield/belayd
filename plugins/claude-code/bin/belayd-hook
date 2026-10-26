@@ -1,39 +1,62 @@
 #!/bin/sh
 # Runs belayd's Claude Code hook for the belayd plugin. The plugin cannot run `belayd init`,
 # so this keeps its own copy of belayd, pinned to the plugin's version, in
-# ~/.belayd/runtime and installs it from npm the first time (at session start, so tool
-# calls stay fast). When belayd cannot run, the call is blocked, never let through.
+# ~/.belayd/runtime and installs it from npm (at session start, so tool calls stay fast).
+# When belayd cannot run, the call is blocked, never let through.
 VERSION=0.4.0
 ROOT="${BELAYD_HOME:-$HOME/.belayd}/runtime"
-DIR="$ROOT/$VERSION"
-BIN="$DIR/node_modules/belayd-cli/dist/bin.js"
 
+bin_of() { echo "$ROOT/$1/node_modules/belayd-cli/dist/bin.js"; }
+
+# Installs one version (a number, or `latest`) into its own folder, one install at a time.
 install() {
-  [ -f "$BIN" ] && return 0
+  dir="$ROOT/$1"
+  [ -f "$(bin_of "$1")" ] && return 0
   command -v npm >/dev/null 2>&1 || return 1
   mkdir -p "$ROOT" || return 1
-  # One install at a time: parallel hooks wait for the first one.
   tries=0
-  until mkdir "$DIR.lock" 2>/dev/null; do
-    [ -f "$BIN" ] && return 0
+  until mkdir "$dir.lock" 2>/dev/null; do
+    [ -f "$(bin_of "$1")" ] && return 0
     tries=$((tries + 1))
     [ "$tries" -gt 110 ] && return 1
     sleep 1
   done
-  if [ ! -f "$BIN" ]; then
-    rm -rf "$DIR.tmp"
-    npm install --prefix "$DIR.tmp" --no-audit --no-fund --silent "belayd-cli@$VERSION" >/dev/null 2>&1 &&
-      rm -rf "$DIR" && mv "$DIR.tmp" "$DIR"
+  if [ ! -f "$(bin_of "$1")" ]; then
+    rm -rf "$dir.tmp"
+    if npm install --prefix "$dir.tmp" --no-audit --no-fund --silent "belayd-cli@$1" >/dev/null 2>&1; then
+      rm -rf "$dir" && mv "$dir.tmp" "$dir"
+    else
+      rm -rf "$dir.tmp"
+    fi
   fi
-  rmdir "$DIR.lock" 2>/dev/null
-  [ -f "$BIN" ]
+  rmdir "$dir.lock" 2>/dev/null
+  [ -f "$(bin_of "$1")" ]
+}
+
+# The newest copy already installed. Right after a release the pinned version can be on
+# GitHub before it is on npm.
+newest() {
+  for dir in $(ls -d "$ROOT"/*/ 2>/dev/null | sort -rV); do
+    case "$dir" in *.tmp/ | *.lock/) continue ;; esac
+    if [ -f "${dir}node_modules/belayd-cli/dist/bin.js" ]; then
+      echo "${dir}node_modules/belayd-cli/dist/bin.js"
+      return 0
+    fi
+  done
+  return 1
 }
 
 if [ "$1" = "--prepare" ]; then
-  install
+  install "$VERSION" || newest >/dev/null || install latest
   exit 0
 fi
-if install && command -v node >/dev/null 2>&1; then
+
+BIN="$(bin_of "$VERSION")"
+if [ ! -f "$BIN" ]; then
+  BIN="$(newest)" || { install "$VERSION" && BIN="$(bin_of "$VERSION")"; } ||
+    { install latest && BIN="$(bin_of latest)"; }
+fi
+if [ -f "$BIN" ] && command -v node >/dev/null 2>&1; then
   exec node "$BIN" hook "$@"
 fi
 echo "belayd could not start (it needs Node.js 22 or newer and npm), so this action is blocked to be safe. Run: npm install -g belayd-cli" >&2
