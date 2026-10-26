@@ -279,7 +279,7 @@ A learned rule matches that exact command, word for word, touching the same path
 <!-- agents:start -->
 | Agent | Blocks | Asks you | Audit | Undo | How |
 |---|---|---|---|---|---|
-| Claude Code | ✓ | Its own prompt, or `belayd approve` when headless | ✓ | ✓ | PreToolUse and PostToolUse hooks |
+| Claude Code | ✓ | Its own prompt, or `belayd approve` when headless | ✓ | ✓ | PreToolUse and PostToolUse hooks, from `belayd init` or the belayd plugin |
 | Codex | ✓ | `belayd approve` or the web page | ✓ | ✓, including `apply_patch` | Codex hooks |
 | Any MCP server | ✓ | `belayd approve` or the web page | ✓ | For tools that change files | `belayd mcp` gateway |
 | Cursor | Partly | `belayd approve` or the web page | ✓ | ✓ | Cursor runs Claude Code's hooks |
@@ -305,7 +305,7 @@ belayd mcp --name github -- npx -y @modelcontextprotocol/server-github
 Coding agents run unattended in CI too, where nobody is watching the log. The belayd action sets up belayd and its hooks for the agents in the job, and when the job ends it puts what every agent did, and what belayd decided, in the job summary:
 
 ```yaml
-- uses: albert-canfield/belayd@v0.4.0
+- uses: albert-canfield/belayd@v0.5.0
   with:
     fail-on-block: true # fail the job if belayd blocked anything
 - run: claude -p "Fix the failing test in src/parser.ts"

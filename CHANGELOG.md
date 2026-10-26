@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-26)
+
+What a project brings, and what an agent installs: belayd now looks at the hooks, MCP servers, Git options and other things a repository carries before the agent's first move, asks before an agent installs a package nobody has heard of, finds keys that already reached your agents, and installs as a Claude Code plugin. Also two security fixes (update soon if you use 0.4.0) and a new shell parser.
+
+Upgrading: in a project belayd has not worked in before, the agent's first call may get one question about what the project brings; projects you already used are recorded as they are. belayd now makes one kind of network call, a lookup of a package name in its public registry before an agent installs a package your project does not have yet; `packages: { check: false }` turns it off.
 
 ### New
 
+- A look at what a project brings before an agent works in it. A repository can carry a Git option that runs a command on every `git status`, hooks in an agent's project settings, MCP servers, subagent and skill files, and editor tasks that run when the folder opens. On the agent's first call in a project belayd lists them and asks once (rule `ask-project-setup`, final); after that it asks again only when one of them changes. `belayd preflight` shows the list, `belayd init` shows it and approves it, and the GitHub Action approves the repository it checks out. belayd's own hooks are left out only when they match the belayd that is running, so a hook dressed up as belayd's is still listed.
+- Packages nobody has heard of. Before an agent installs a package the project does not have yet (`npm`, `pnpm`, `yarn`, `bun`, `pip`, `python -m pip`, `uv`, `poetry`) or runs one straight from the registry (`npx`, `pnpm dlx`, `bunx`, `uvx`, `pipx run`), belayd looks the name up and asks when the registry does not know it or first saw it in the last 30 days (rule `ask-unknown-package`). Lookups go to the public npm or PyPI registry only, are cached for a day, stop after 2.5 seconds, and say nothing when they fail. Packages from a private registry or index are never looked up.
+- belayd as a Claude Code plugin: `/plugin install belayd --marketplace albert-canfield/belayd`. The plugin keeps its own copy of belayd, pinned to its version, and blocks calls when belayd cannot run. `belayd doctor` recognises it.
 - `belayd scan --secrets` lists the API keys and tokens that reached your agents and are still in their transcripts on disk, where malware that steals keys looks for them: in tool output, commands, your prompts or the agent's replies, in Claude Code's and Codex's history (archived Codex sessions included). Each one is named by kind (`GitHub token`, `value of STRIPE_KEY from .env`) and a fingerprint, never by its value, with how often and when it turned up, the transcripts that hold it, and what to do: rotate the key, then delete the old transcripts. Plain `belayd scan` ends with one line when it finds any, and its examples now hide values from the project's .env too, not only known token formats.
 
 ### Fixed
@@ -15,6 +22,7 @@
 
 ### Changed
 
+- Development tools: tsup 9, vitest 5.0.5, eslint 10.13 and typescript-eslint 8.72. Hook latency is the same.
 - The shell parser is now unbash 6.0.1. It reads `$'\''` inside `$(...)` correctly, so `echo "$(echo $'\'')"; rm -rf ~` is blocked instead of asked about as unparseable. It stops reading past 256 levels of nesting, and belayd asks about any command where that happens, including the few it used to see through.
 - `belayd doctor` now says plainly where an agent itself leaves a gap, as a note rather than a warning: Copilot CLI lets a tool run when its hook times out (belayd answers well before, so it only matters if belayd cannot run at all), and commands you type yourself with `!` in OpenCode go straight to the shell. The README's limits say the same.
 

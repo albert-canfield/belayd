@@ -1,6 +1,6 @@
 {
   "name": "belayd-cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "One policy, one audit trail and one undo button for every AI coding agent.",
   "keywords": [
     "ai",

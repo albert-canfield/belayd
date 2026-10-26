@@ -3,7 +3,7 @@
 # so this keeps its own copy of belayd, pinned to the plugin's version, in
 # ~/.belayd/runtime and installs it from npm (at session start, so tool calls stay fast).
 # When belayd cannot run, the call is blocked, never let through.
-VERSION=0.4.0
+VERSION=0.5.0
 ROOT="${BELAYD_HOME:-$HOME/.belayd}/runtime"
 
 bin_of() { echo "$ROOT/$1/node_modules/belayd-cli/dist/bin.js"; }
