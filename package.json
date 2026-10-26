@@ -61,7 +61,7 @@
     "tsup": "9.0.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1",
-    "unbash": "5.1.0",
+    "unbash": "6.0.1",
     "vitest": "5.0.5",
     "yaml": "2.9.1",
     "zod": "4.6.7"

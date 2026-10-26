@@ -833,3 +833,57 @@
 - { cmd: 'bin/rails db:drop', balanced: ask }
 - { cmd: 'supabase db reset', balanced: ask }
 - { cmd: 'python manage.py flush --no-input', balanced: ask }
+
+# --- unbash 6: new AST shapes must not hide anything (26 Oct 2026) ------------
+# elif branches are a list now, `!` and `time` are pipeline prefixes, and `*`, `?`
+# and `[...]` are glob parts, with any substitution inside the bracket.
+- { cmd: 'if false; then :; elif true; then rm -rf ~; fi', balanced: deny }
+- {
+    cmd: 'if a; then :; elif b; then :; elif c; then cat .env; else :; fi',
+    balanced: deny,
+    yolo: ask,
+  }
+- { cmd: 'if a; then b; elif c; then cd /; else d; fi; rm -rf *', balanced: deny }
+- { cmd: 'if a; then :; elif b; then f() { rm -rf ~; }; fi; f', balanced: deny }
+- { cmd: '! cd /; rm -rf *', balanced: deny }
+- { cmd: 'time cd /; rm -rf *', balanced: deny }
+- { cmd: '! X=~; rm -rf "$X"', balanced: deny }
+- { cmd: 'rm -rf /[u]sr', balanced: deny }
+- { cmd: 'cd / && rm -rf [a-z]*', balanced: deny }
+- { cmd: 'cat .en[v]', balanced: deny, yolo: ask }
+- { cmd: 'ls [$(rm -rf ~)]', balanced: deny }
+- { cmd: 'pnpm --filter=[$(rm -rf ~)] exec x', balanced: deny }
+- { cmd: 'echo [$(cat .env)]', balanced: deny, yolo: ask }
+- { cmd: '$''\162m'' -rf ~', balanced: deny, note: ANSI-C octal }
+- { cmd: 'bash -c $''\x72m -rf ~''', balanced: deny }
+# unbash 5 lost the end of `$(...)` after `$'\''` and belayd asked; now it is read.
+- { cmd: 'echo "$(echo $''\'''')"; rm -rf ~', balanced: deny }
+- { cmd: 'X="$(echo $''\'''')"; cat .env', balanced: deny, yolo: ask }
+# Substitutions belayd did not look for before: inside [[ ]], array indexes,
+# ${...} operands, case patterns, and brace or extglob bodies. Each one runs in bash.
+- { cmd: '[[ -n $(rm -rf ~) ]]', balanced: deny }
+- { cmd: '[[ a && b && $(rm -rf ~) ]]', balanced: deny }
+- { cmd: '[[ ! ! $(cat .env) ]]', balanced: deny, yolo: ask }
+- { cmd: 'a[$(rm -rf ~)]=1', balanced: deny }
+- { cmd: 'declare -A m; m[$(rm -rf ~)]=x', balanced: deny }
+- { cmd: 'echo ${a[$(rm -rf ~)]}', balanced: deny }
+- { cmd: 'echo ${x:+$(rm -rf ~)}', balanced: deny }
+- { cmd: 'echo ${x#$(cat .env)}', balanced: deny, yolo: ask }
+- { cmd: 'echo ${X:=$(rm -rf ~)}', balanced: deny }
+- { cmd: 'X=$(date); echo ${X:-$(rm -rf ~)}', balanced: deny }
+- { cmd: "cat <<EOF\n${a[$(rm -rf ~)]}\nEOF", balanced: deny }
+- { cmd: 'case x in $(rm -rf ~)) ;; esac', balanced: deny }
+- { cmd: 'case $1 in "$(cat .env)") ;; *) echo usage ;; esac', balanced: deny, yolo: ask }
+- { cmd: 'echo {a,$(cat .env)}', balanced: deny, yolo: ask }
+- { cmd: 'echo @($(rm -rf ~))', balanced: deny }
+# A brace body with quotes, expansions or another brace in it is an unknown path.
+- { cmd: 'rm -rf {$HOME,x}', balanced: ask }
+- { cmd: 'rm -rf {"$HOME",x}', balanced: ask }
+- { cmd: 'rm -rf {x,{~,y}}', balanced: ask }
+- { cmd: 'rm -rf {a\,b,~}', balanced: deny }
+# Ordinary arithmetic stays quiet.
+- {
+    cmd: 'for ((i=0; i<3; i++)); do echo "${a[i+1]}" $((i * 2)); done',
+    balanced: pass,
+    strict: allow,
+  }

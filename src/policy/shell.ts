@@ -1,15 +1,18 @@
 import path from 'node:path';
-import { parse } from 'unbash';
+import { forEachChild, parse } from 'unbash';
 import type {
   AndOr,
   Command,
   CommandArgument,
   CompoundList,
+  Elif,
+  LiteralPart,
   ParsedScript,
   Pipeline,
   PipelineNode,
   Redirection,
   Statement,
+  SyntaxNode,
   Word,
   WordPart,
 } from 'unbash';
@@ -725,11 +728,7 @@ class Analyzer {
         break;
       }
       case 'Pipeline':
-        stdout = this.pipeline(n, src, scope, ctx);
-        break;
-      case 'Time':
-      case 'Negation':
-        if (n.command) stdout = this.node(n.command, src, scope, ctx, stdin).stdout;
+        stdout = this.pipeline(n, src, scope, ctx, stdin);
         break;
       case 'Command':
         stdout = this.command(n, src, scope, ctx, stdin);
@@ -743,15 +742,9 @@ class Analyzer {
       case 'CompoundList':
         this.compoundList(n, src, scope, ctx);
         break;
-      case 'If': {
-        this.compoundList(n.clause, src, scope, ctx);
-        const yes = cloneScope(scope);
-        const no = cloneScope(scope);
-        this.compoundList(n.then, src, yes, ctx);
-        if (n.else) this.node(n.else, src, no, ctx);
-        this.merge(scope, [yes, no]);
+      case 'If':
+        this.ifBranch(n.clause, n.then, n.elif, n.else, src, scope, ctx);
         break;
-      }
       case 'For':
       case 'Select': {
         for (const w of n.wordlist ?? []) this.evalWord(w, src, scope, ctx);
@@ -777,6 +770,13 @@ class Analyzer {
       }
       case 'Case': {
         this.evalWord(n.word, src, scope, ctx);
+        // Patterns are expanded while they are tried: `$(cmd)) ...` runs cmd.
+        this.substitutionsIn(
+          n.items.flatMap((item) => item.pattern),
+          src,
+          scope,
+          ctx,
+        );
         // Unless an arm matches anything (`*)`), maybe no pattern matched at all.
         const catchAll = n.items.some((item) => item.pattern.some((w) => w.text === '*'));
         const outcomes = catchAll ? [] : [cloneScope(scope)];
@@ -834,7 +834,42 @@ class Analyzer {
     return { programs, stdout };
   }
 
-  private pipeline(p: Pipeline, src: string, scope: Scope, ctx: Ctx): string | undefined {
+  /**
+   * `if A; then B; elif C; then D; else E; fi`. Each `elif` is checked as an `if` nested
+   * in the `else` of the branch before it, which is what it means.
+   */
+  private ifBranch(
+    clause: CompoundList,
+    then: CompoundList,
+    elif: readonly Elif[],
+    otherwise: CompoundList | undefined,
+    src: string,
+    scope: Scope,
+    ctx: Ctx,
+  ): void {
+    this.compoundList(clause, src, scope, ctx);
+    const yes = cloneScope(scope);
+    const no = cloneScope(scope);
+    this.compoundList(then, src, yes, ctx);
+    const [next, ...more] = elif;
+    if (next) this.ifBranch(next.clause, next.then, more, otherwise, src, no, ctx);
+    else if (otherwise) this.compoundList(otherwise, src, no, ctx);
+    this.merge(scope, [yes, no]);
+  }
+
+  private pipeline(
+    p: Pipeline,
+    src: string,
+    scope: Scope,
+    ctx: Ctx,
+    stdin: StdinInfo | undefined,
+  ): string | undefined {
+    // `! cmd` and `time cmd` are a pipeline of one command with a prefix. That command
+    // runs in this shell, like one written without the prefix (`! cd /; rm -rf *`).
+    if (p.commands.length <= 1) {
+      const only = p.commands[0];
+      return only ? this.node(only, src, scope, ctx, stdin).stdout : undefined;
+    }
     const producers: string[] = [];
     let previous: string | undefined;
     let last: Scope | undefined;
@@ -2356,21 +2391,29 @@ class Analyzer {
     scope: Scope,
     ctx: Ctx,
   ): EvalWord {
-    if (a.value.type === 'ArrayValue') {
-      const words = a.value.elements.map((w) => this.evalWord(w, src, scope, ctx));
+    // `a[$(cmd)]=1` runs cmd to work out the index.
+    const index = a.index ? this.substitutionPrograms([a.index], src, scope, ctx) : [];
+    const value = a.value;
+    if (value.type === 'ArrayValue') {
+      const words = value.elements.map((w) => this.evalWord(w, src, scope, ctx));
       return {
         text: a.text,
         value: words.map((w) => w.value).join(' '),
         values: [],
         resolved: words.every((w) => w.resolved),
-        subPrograms: words.flatMap((w) => w.subPrograms),
+        subPrograms: [...index, ...words.flatMap((w) => w.subPrograms)],
       };
     }
-    return this.evalWord(a.value, src, scope, ctx);
+    const w = this.evalWord(value, src, scope, ctx);
+    return index.length > 0 ? { ...w, subPrograms: [...index, ...w.subPrograms] } : w;
   }
 
   evalWord(word: Word, src: string, scope: Scope, ctx: Ctx): EvalWord {
     if (!word.parts) {
+      if (cutShort(word)) {
+        this.tooDeep(ctx);
+        return unknownWord(word.text);
+      }
       const value = expandTilde(word.text, word.value, this.opts.home);
       const resolved = !/\$\{?=/.test(word.text); // zsh's `$=X`, see below
       return { text: word.text, value, values: [value], resolved, subPrograms: [] };
@@ -2413,7 +2456,7 @@ class Analyzer {
    * FIELD_BREAK and turned into separate words by expandWord.
    */
   private evalParts(
-    parts: readonly WordPart[],
+    wordParts: readonly WordPart[],
     src: string,
     scope: Scope,
     ctx: Ctx,
@@ -2474,6 +2517,7 @@ class Analyzer {
       }
       return useChoices ? list : undefined;
     };
+    const parts = flattenGlobs(wordParts);
     for (const part of parts) {
       // `"$@"` is one word per argument, and no word at all when there are none.
       if (part.type === 'DoubleQuoted' && scope.positional && isAllArguments(part)) {
@@ -2520,6 +2564,7 @@ class Analyzer {
         }
         case 'ParameterExpansion': {
           let v: string | string[] | undefined;
+          let operandRead = false;
           if (!part.prefix && !part.index && !part.operation)
             v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
           // `${BASH_SOURCE[0]}` is the script being read, like `$0`.
@@ -2548,8 +2593,20 @@ class Analyzer {
               const fallback = this.evalWord(part.operation.operand, src, scope, ctx);
               subPrograms.push(...fallback.subPrograms);
               if (fallback.resolved) v = fallback.value;
+              operandRead = true;
             }
           }
+          // `${a[$(cmd)]}`, `${x:+$(cmd)}`, `${x/$(cmd)/y}`: the index and the operand
+          // are expanded too, so what they run is checked, even when the value is not used.
+          if (part.index || (part.operation && !operandRead))
+            subPrograms.push(
+              ...this.substitutionPrograms(
+                [part.index, operandRead ? undefined : part.operation],
+                src,
+                scope,
+                ctx,
+              ),
+            );
           if (v === undefined) {
             const plain = !part.prefix && !part.index && !part.operation;
             unknown(plain && isEnv(part.parameter));
@@ -2561,26 +2618,22 @@ class Analyzer {
         case 'ProcessSubstitution': {
           const before = this.out.length;
           let staticOut: string | undefined;
-          if (part.script) {
-            for (const err of part.script.errors ?? []) this.errors.push(err.message);
-            const only = part.script.commands.length === 1 ? part.script.commands[0] : undefined;
+          // Parsed on first access (unbash 6), so read once.
+          const script = part.script;
+          if (script) {
+            for (const err of script.errors ?? []) this.errors.push(err.message);
+            const only = script.commands.length === 1 ? script.commands[0] : undefined;
             if (only) {
               // `$(echo .env)` is just `.env`, and `<(echo 'rm -rf ~')` holds that
               // text: evaluate simple output statically.
               staticOut = this.node(
                 only.command,
-                part.script.source ?? src,
+                script.source ?? src,
                 cloneScope(scope),
                 ctx,
               ).stdout;
             } else {
-              this.script(
-                part.script,
-                part.script.source ?? src,
-                cloneScope(scope),
-                ctx,
-                undefined,
-              );
+              this.script(script, script.source ?? src, cloneScope(scope), ctx, undefined);
             }
           }
           subPrograms.push(
@@ -2605,10 +2658,19 @@ class Analyzer {
           append([part.text]);
           break;
         case 'BraceExpansion':
-          append(expandBraces(part.text));
-          break;
         case 'ExtendedGlob':
-          append([part.text]);
+          // Quotes, escapes, expansions or another brace inside (`{"$HOME",x}`,
+          // `{x,{~,y}}`, `@($(cmd))`) are not followed here: the word is unknown, and
+          // what a substitution in it runs is still checked. The text split at its
+          // commas is kept as the value, so a `~` in it is still seen.
+          if (
+            /[\\'"$`]/.test(part.text) ||
+            (part.type === 'BraceExpansion' && part.text.slice(1, -1).includes('{'))
+          ) {
+            subPrograms.push(...this.substitutionPrograms([part], src, scope, ctx));
+            unknown(false);
+          }
+          append(part.type === 'BraceExpansion' ? expandBraces(part.text) : [part.text]);
           break;
       }
     }
@@ -2789,24 +2851,67 @@ class Analyzer {
     return v === null ? undefined : v;
   }
 
-  /** Finds `$(...)` and `<(...)` anywhere inside an expression tree and analyses them. */
-  private substitutionsIn(nodes: unknown[], src: string, scope: Scope, ctx: Ctx): void {
-    const visit = (n: unknown): void => {
-      if (!n || typeof n !== 'object') return;
-      if (Array.isArray(n)) return n.forEach(visit);
-      const node = n as { type?: string; script?: ParsedScript };
+  /**
+   * Finds `$(...)` and `<(...)` anywhere inside an expression tree and analyses them.
+   * unbash's own traversal is used: word parts, scripts and arithmetic are lazy getters
+   * that a walk over the object's own keys would not see.
+   */
+  private substitutionsIn(
+    nodes: readonly (SyntaxNode | undefined)[],
+    src: string,
+    scope: Scope,
+    ctx: Ctx,
+  ): void {
+    // A stack rather than recursion: `$((1+1+...))` is a tree as deep as it is long.
+    const stack = nodes.filter((n): n is SyntaxNode => n !== undefined).reverse();
+    const children: SyntaxNode[] = [];
+    const collect = (child: SyntaxNode) => void children.push(child);
+    while (stack.length > 0) {
+      const node = stack.pop()!;
       if (
-        (node.type === 'CommandExpansion' ||
-          node.type === 'ProcessSubstitution' ||
-          node.type === 'ArithmeticCommandExpansion') &&
-        node.script
+        node.type === 'CommandExpansion' ||
+        node.type === 'ProcessSubstitution' ||
+        node.type === 'ArithmeticCommandExpansion'
       ) {
-        this.script(node.script, node.script.source ?? src, cloneScope(scope), ctx, undefined);
-        return;
+        const script = node.script;
+        if (!script) continue;
+        // Each nested script keeps its own parse errors, such as a body skipped for
+        // being nested too deeply: what could not be read is a question.
+        if (!ctx.trusted) for (const err of script.errors ?? []) this.errors.push(err.message);
+        this.script(script, script.source ?? src, cloneScope(scope), ctx, undefined);
+        continue;
       }
-      for (const [k, v] of Object.entries(node)) if (k !== 'script') visit(v);
-    };
-    nodes.forEach(visit);
+      if (cutShort(node)) this.tooDeep(ctx);
+      children.length = 0;
+      forEachChild(node, collect);
+      // In source order.
+      for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]!);
+    }
+  }
+
+  /** Part of the command was nested too deeply for the parser: belayd cannot see it. */
+  private tooDeep(ctx: Ctx): void {
+    if (!ctx.trusted) this.errors.push('nested too deeply to check');
+  }
+
+  /**
+   * Like substitutionsIn, and returns the programs they run. Used for the parts of a word
+   * that do not end up in its value but still run when it is expanded: an array index
+   * (`${a[$(cmd)]}`, `a[$(cmd)]=1`), an operand like `${x:+$(cmd)}`, or a brace or
+   * extended glob body.
+   */
+  private substitutionPrograms(
+    nodes: readonly (SyntaxNode | undefined)[],
+    src: string,
+    scope: Scope,
+    ctx: Ctx,
+  ): string[] {
+    const before = this.out.length;
+    this.substitutionsIn(nodes, src, scope, ctx);
+    return this.out
+      .slice(before)
+      .map((i) => i.program)
+      .filter(Boolean);
   }
 
   private base(text: string, scope: Scope, ctx: Ctx): Invocation {
@@ -3176,6 +3281,55 @@ function callArgs(code: string, names: readonly string[]): CallArg[][] {
     re.lastIndex = Math.max(i, m.index + m[0].length);
   }
   return out;
+}
+
+/**
+ * unbash 6 gives unquoted `*`, `?` and `[...]` parts of their own. belayd reads a pattern
+ * as the text it is, like any other literal, so each becomes a literal again. A bracket
+ * becomes `[`, its own parts, then `]`, so what `[$(cmd)]` or `["$x"]` holds is still
+ * expanded and checked.
+ */
+function flattenGlobs(parts: readonly WordPart[]): readonly WordPart[] {
+  if (!parts.some((p) => p.type === 'Glob')) return parts;
+  const lit = (pos: number, end: number, text: string, value = text): LiteralPart => ({
+    type: 'Literal',
+    pos,
+    end,
+    text,
+    value,
+  });
+  const out: WordPart[] = [];
+  for (const p of parts) {
+    if (p.type !== 'Glob') out.push(p);
+    else if (p.kind !== 'bracket' || p.parts.length === 0)
+      out.push(lit(p.pos, p.end, p.text, p.value));
+    else {
+      const first = p.parts[0]!;
+      const last = p.parts[p.parts.length - 1]!;
+      out.push(
+        lit(p.pos, first.pos, p.text.slice(0, first.pos - p.pos)),
+        ...flattenGlobs(p.parts),
+        lit(last.end, p.end, p.text.slice(last.end - p.pos)),
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Past its nesting limit (256 levels) unbash 6 stops parsing a word or an arithmetic
+ * expression and keeps the rest as plain text, in some places without an error (array
+ * elements, heredocs, brace bodies, `for ((...))` headers, `$[...]`). Such a node has no
+ * parts although its text still holds an expansion, which would run unseen.
+ */
+function cutShort(node: SyntaxNode): boolean {
+  if (node.type === 'Word') {
+    if (node.parts || !/[`'"$]/.test(node.text)) return false;
+    // Quotes and expansions always give a word parts. Escaped characters are literal.
+    return /[`'"]|\$[({[\w@*#?$!-]/.test(node.text.replace(/\\[\s\S]/g, ''));
+  }
+  if (node.type === 'ArithmeticWord') return !node.parts && /[$`]/.test(node.value);
+  return false;
 }
 
 /** True for `"$@"` and `"${@}"`. */

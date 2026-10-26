@@ -156,6 +156,37 @@ describe('shell analysis', () => {
     const invs = run(cmd);
     expect(invs.some((i) => i.dynamic)).toBe(true);
   });
+
+  it('reports what the parser cut short past its nesting limit', () => {
+    // unbash 6 keeps such parts as plain text, sometimes without an error of its own.
+    const deep = (s: string) => '${x:-'.repeat(300) + s + '}'.repeat(300);
+    const parens = (s: string) => '('.repeat(300) + s + ')'.repeat(300);
+    for (const cmd of [
+      `a=(${deep('$(rm -rf ~)')})`,
+      `cat <<EOF\n${deep('$(rm -rf ~)')}\nEOF`,
+      `echo {a,${deep('$(rm -rf ~)')}}`,
+      `echo $(( ${deep('$(rm -rf ~)')} ))`,
+      `for ((i=${parens('$(rm -rf ~)')};;)); do :; done`,
+      `echo $[${parens('$(rm -rf ~)')}]`,
+      `[[ -n $(${'{ '.repeat(300)}rm -rf ~${'; }'.repeat(300)}) ]]`,
+    ]) {
+      const a = analyzeShell(cmd, opts);
+      expect(
+        a.errors.length > 0 || a.invocations.some((i) => i.program === 'rm'),
+        cmd.slice(0, 40),
+      ).toBe(true);
+    }
+  });
+
+  it('walks a very long arithmetic expression without running out of stack', () => {
+    expect(programs(`echo $((${'1+'.repeat(20_000)}$(rm -rf ~)))`)).toContain('rm');
+  });
+
+  it('reads glob characters as the text they are', () => {
+    expect(run('rm -rf ~/prec*')[0]?.argv).toEqual(['rm', '-rf', '/home/dev/prec*']);
+    expect(run('cat .[!x]nv x[a-z]? "*"\\*')[0]?.argv).toEqual(['cat', '.[!x]nv', 'x[a-z]?', '**']);
+    expect(run('echo [$(whoami)]').map((i) => i.program)).toEqual(['whoami', 'echo']);
+  });
 });
 
 describe('list-form calls in code', () => {

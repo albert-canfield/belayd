@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- Commands hidden where belayd did not look now count: `$(...)` inside `[[ ]]`, in an array index (`a[$(cmd)]=1`, `${a[$(cmd)]}`), in a `${...}` operand (`${x:+$(cmd)}`, `${x#$(cmd)}`, `${x:=$(cmd)}`), in a `case` pattern, and in a brace or extended glob body (`{a,$(cmd)}`, `@($(cmd))`). Bash runs every one of them, and `[[ -n $(rm -rf ~) ]]` used to pass.
+- `rm -rf {$HOME,x}`, `rm -rf {"$HOME",x}` and nested braces like `rm -rf {x,{~,y}}` were read as plain file names and passed. A brace with quotes, expansions or another brace inside is now an unknown path, so belayd asks.
+- A very long arithmetic expression (`$((1+1+...))` with thousands of terms) no longer runs belayd out of stack. That error blocked the command, or let it through with `failMode: open`.
+
 ### Changed
 
+- The shell parser is now unbash 6.0.1. It reads `$'\''` inside `$(...)` correctly, so `echo "$(echo $'\'')"; rm -rf ~` is blocked instead of asked about as unparseable. It stops reading past 256 levels of nesting, and belayd asks about any command where that happens, including the few it used to see through.
 - `belayd doctor` now says plainly where an agent itself leaves a gap, as a note rather than a warning: Copilot CLI lets a tool run when its hook times out (belayd answers well before, so it only matters if belayd cannot run at all), and commands you type yourself with `!` in OpenCode go straight to the shell. The README's limits say the same.
 
 ## 0.4.0 (2026-10-20)

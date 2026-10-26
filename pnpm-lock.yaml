@@ -48,8 +48,8 @@ importers:
         specifier: 8.72.1
         version: 8.72.1(eslint@10.13.0)(typescript@6.0.3)
       unbash:
-        specifier: 5.1.0
-        version: 5.1.0
+        specifier: 6.0.1
+        version: 6.0.1
       vitest:
         specifier: 5.0.5
         version: 5.0.5(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -1177,8 +1177,8 @@ packages:
   ufo@1.6.4:
     resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
 
-  unbash@5.1.0:
-    resolution: {integrity: sha512-YVGyy4XqoZ2AVgHjVdL9cchMSurlXFHWviORa8RiU/Bnol4ooW5Lpyur/5XmbgDdyCKxymmgsEQsLGBMIJ/Agg==}
+  unbash@6.0.1:
+    resolution: {integrity: sha512-0db9eS5iqybux41zLkX69nk90KTci7F7eZ+gXzEG/Q7E0tAqEBhRh5fkZvk1N7jT7QkGWqq34i8SFGPFEe1V8A==}
     engines: {node: '>=14'}
 
   undici-types@6.21.0:
@@ -2259,7 +2259,7 @@ snapshots:
 
   ufo@1.6.4: {}
 
-  unbash@5.1.0: {}
+  unbash@6.0.1: {}
 
   undici-types@6.21.0: {}
 
