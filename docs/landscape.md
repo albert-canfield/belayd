@@ -50,6 +50,7 @@ Blocking is now a commodity. Undo is not, and running several agents at once is 
 | [nah](https://github.com/manuelschipper/nah) | 487 | MIT | Maps calls to typed effects, never returns allow | Claude, Codex, Cursor, Pi and more | block, defer to host | `nah log` | no |
 | [Sage](https://github.com/gendigitalinc/sage) (Gen Digital) | 317 | Apache-2.0 | 300+ YAML patterns, cloud URL reputation; errors allow | Claude (plugin), Cursor, VS Code, OpenClaw, OpenCode | block, ask | yes | no |
 | [Cupcake](https://github.com/eqtylab/cupcake) † | 297 | Apache-2.0 | Rego compiled to Wasm, one policy per agent | 4 | allow, deny, review, modify | enriched audit | no |
+| [Vestige](https://github.com/samvallad33/vestige) | 656 | AGPL-3.0 | Memory for agents with a guard on top: hooks stop recognized destructive tool calls, risky ones need a one-use permit, every decision gets a receipt in an append-only log, and stops are shared across agents | any agent with hooks or MCP | block, permit | append-only log with receipts | ? |
 | [Dippy](https://github.com/ldayton/Dippy) | 242 | MIT | Its own bash parser | Claude | block, ask | ? | no |
 | [Sondera hooks](https://github.com/sondera-ai/sondera-coding-agent-hooks) † | 228 | MIT | gRPC daemon, Cedar and YARA, fail-closed, per-agent capability matrix | 10 | allow, deny, escalate | trajectory TUI | no |
 | [node9](https://github.com/node9-ai/node9-proxy) | 219 | Apache-2.0 | Shell AST, MCP gateway, GitHub Action, paid tier | 12 | block, ask (chat or team) | yes | removed Aug 2026 |
