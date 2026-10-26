@@ -138,6 +138,13 @@ By default a hook that crashes, times out (default timeout 600 s), cannot start,
 
 Effort: about 3 to 4 days including tests, on top of the policy engine.
 
+### Claude Code plugin (since 0.5)
+
+- Claude Code installs plugins from a marketplace: a repository (or folder) with `.claude-plugin/marketplace.json` listing plugins by relative path. belayd's is the repository itself: `/plugin install belayd --marketplace albert-canfield/belayd` (one step on Claude Code 2.1.275 and later), or `claude plugin marketplace add albert-canfield/belayd` then `claude plugin install belayd@belayd`.
+- The plugin (`plugins/claude-code`) declares settings hooks in `hooks/hooks.json`: SessionStart, PreToolUse and PostToolUse, each running `${CLAUDE_PLUGIN_ROOT}/bin/belayd-hook`. A plugin cannot run `belayd init`, so the launcher keeps a copy of belayd pinned to the plugin's version in `~/.belayd/runtime/<version>`, installs it from npm at session start (one install at a time, behind a lock folder), and exits 2, which blocks, when belayd cannot run. PreToolUse also has `onFailure: "block"`.
+- `claude plugin validate` passes. Tried live 26 Oct 2026 with Claude Code 2.1.309 through `ollama launch claude` and `qwen3:1.7b`: the session listed the plugin, SessionStart installed belayd 0.4.0 into the runtime folder, and belayd's PreToolUse hook held and then blocked two writes outside the project in a `claude -p` run.
+- `belayd doctor` reports the plugin when it is turned on in `enabledPlugins`, and warns when settings hooks from `belayd init` check every call a second time.
+
 ## Codex CLI
 
 Status: shipped in v0.1, verified live with Codex CLI 0.162.0-alpha.2 (`cat .env` blocked through PreToolUse, a real `apply_patch` edit undone). Latest stable `rust-v0.162.1` (9 Oct 2026). Sources: [Hooks](https://developers.openai.com/codex/hooks), [Config reference](https://learn.chatgpt.com/docs/config-file/config-reference.md), [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules.md), [Sandboxing](https://learn.chatgpt.com/docs/sandboxing.md), [Managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration.md), [Releases](https://github.com/openai/codex/releases).

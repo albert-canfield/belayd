@@ -329,6 +329,7 @@ Written 19 Oct 2026, after 0.3.0.
 | 0.1.0 | 14 Oct | M1 to M7: policy, shell analysis, approvals, audit, undo, Claude Code, Codex, Copilot CLI, Gemini CLI, the MCP gateway |
 | 0.2.0 | 15 Oct | `belayd tune`, checks inside scripts the agent wrote, environment runners (`uv run`, `poetry run`), OpenCode, the GitHub Action, the differential test |
 | 0.3.0 | 19 Oct | `belayd scan`, undo per agent when several share a project, extra folders, snapshot retention, trust for committed and unchanged scripts |
+| 0.5.0 | 26 Oct | A look at what a project brings before the agent's first command (`belayd preflight`), questions for packages nobody has heard of, secrets found in past agent transcripts (`belayd scan --secrets`), the Claude Code plugin, the shell parser on unbash 6, and doctor notes for gaps the agents themselves leave |
 | 0.4.0 | 20 Oct | A question before one agent wrecks another's uncommitted work, `belayd ps`, questions for agents started with their safety off, the mods check in `doctor`, questions for skipped Git hooks, public repositories, files that run code, cloud deletes and database resets, OpenCode 2, much cheaper snapshots in big projects, and a fix for a repository's Git config running code |
 
 ### What changed around us
@@ -363,23 +364,24 @@ What it won't chase: pattern packs for their own sake, an account or a cloud ser
 
 All four items shipped in 0.4.0: the collision guard (`ask-other-agents-work`, src/policy/clobber.ts, fed by a per-project ledger of which session's commands named which files), agents started with their safety off (`ask-agent-without-safety`, src/policy/unguarded.ts), the live view (`belayd ps`), and the mods check in `belayd doctor`. Each has corpus rows or end-to-end tests that try to get around it.
 
-### 0.5: what a project brings with it
+### Shipped in 0.5.0: what a project brings with it
+
+All four items shipped: the project check (`ask-project-setup`, src/preflight, `belayd preflight`), packages nobody has heard of (`ask-unknown-package`, src/packages, registry lookups cached for a day with a 2.5 s deadline), secrets in past transcripts (`belayd scan --secrets`, values never printed), and the Claude Code plugin (`plugins/claude-code`, tried live with Claude Code 2.1.309).
+
+### 0.6: teams and the rest of the agents
 
 | | Scope | Done when |
 |---|---|---|
-| A look before the first command | When an agent starts work in a project, list what can run code or steer the agent there: command-running Git options in the project's own config, each agent's project hooks and plugins, subagent and skill files, MCP servers, editor tasks. Remember them, and ask when one is new or changed since belayd last saw it | A cloned repository with a planted `core.fsmonitor`, a project hook and a subagent file gets one question naming all three; an unchanged project gets none |
-| Packages nobody has heard of | Ask before an agent installs a package that is not in the lockfile and is either brand new or missing from the registry (the shape of slopsquatting), across npm, pnpm, yarn, bun, pip, uv and cargo, through runners and wrappers | Corpus rows for each manager; a registry lookup that is cached, has a short deadline and asks when it cannot answer |
-| Secrets that already reached an agent | `belayd scan` reports keys and tokens found in agents' past transcripts and tool output, by file and kind, never printing the value | Finds planted test keys in a fake history; prints none of them |
-| Install as a Claude Code plugin | A marketplace in this repository, so `claude plugin install` sets belayd up | A fresh Claude Code installs it from the marketplace and blocks `cat .env` |
+| Audit export | `belayd log --export` writes the audit log as JSONL, and optionally sends OpenTelemetry events, with the hash chain so a collector can check nothing was dropped | A collector gets every event of a session in order and `--verify` passes on the exported file |
+| One agent running what another wrote | The questions about running files an agent changed also cover files another live agent changed in the same project | Agent B running a script agent A just wrote gets a question naming agent A |
+| Copilot CLI and Gemini CLI extensions | Install belayd the way the Claude Code plugin does, for the agents that support extension packages | Each installs from its own command and blocks `cat .env` in a live session |
+| Running alongside auto mode and a sandbox | A page that shows the three together, with what each one catches | Every claim on it is a command a reader can run |
 
 ### Later
 
-- **Easier installs.** Copilot CLI and Gemini CLI extension packages, the action listed on GitHub Marketplace, awesome-claude-code once the project is 14 days old, and a Homebrew tap until Homebrew core's star threshold is met.
+- **Easier installs.** The action listed on GitHub Marketplace, awesome-claude-code once the project is 14 days old, and a Homebrew tap until Homebrew core's star threshold is met.
 - **The quiet tail.** Deletes of temporary paths belayd can't resolve, programs chosen through a variable, and `git update-ref` still ask more often than they need to.
 - **More agents.** Antigravity CLI once its hooks settle, and Ollama's own agent once it has a hook point.
-- **A page on using belayd alongside auto mode and a sandbox**, since that is how most people will run it.
-- **An audit export** (JSONL and OpenTelemetry) for teams that keep agent logs centrally. Research in September showed agents in every major harness can delete their own traces; belayd's log already sits outside the agent's control.
-- **Cross-agent write-then-run.** belayd asks when an agent runs a script it changed itself. The same question when one agent runs what another agent just wrote.
 
 ### Risks
 

