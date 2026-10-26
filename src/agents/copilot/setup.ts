@@ -114,6 +114,12 @@ export const copilotSetup: AgentSetup = {
         text: 'Copilot CLI found, but no belayd hook for it',
         hint: 'Run: belayd init --agent copilot',
       });
+    else
+      lines.push({
+        status: 'note',
+        text: 'Copilot CLI lets a tool run when its hook times out.',
+        hint: `belayd answers within ${COPILOT_HOOK_TIMEOUT_SECONDS} s, a question to you included, so this only matters if belayd cannot run at all.`,
+      });
     return lines;
   },
 };

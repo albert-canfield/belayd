@@ -13,15 +13,20 @@ import { loadPolicy } from '../policy/load.js';
 import { version } from '../version.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 
-type Status = 'ok' | 'warn' | 'fail';
+type Status = 'ok' | 'warn' | 'fail' | 'note';
 
-const ICON: Record<Status, string> = { ok: pc.green('✔'), warn: pc.yellow('!'), fail: pc.red('✖') };
+const ICON: Record<Status, string> = {
+  ok: pc.green('✔'),
+  warn: pc.yellow('!'),
+  fail: pc.red('✖'),
+  note: pc.dim('·'),
+};
 
 export async function doctor(cwd = process.cwd()): Promise<number> {
   let failed = false;
   const line = (status: Status, text: string, hint?: string) => {
     if (status === 'fail') failed = true;
-    console.log(`${ICON[status]} ${text}`);
+    console.log(`${ICON[status]} ${status === 'note' ? pc.dim(text) : text}`);
     if (hint) console.log(pc.dim(`  ${hint}`));
   };
 

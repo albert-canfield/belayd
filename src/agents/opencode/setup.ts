@@ -254,6 +254,12 @@ export const opencodeSetup: AgentSetup = {
         text: 'OpenCode found, but no belayd plugin for it',
         hint: 'Run: belayd init --agent opencode',
       });
+    else
+      lines.push({
+        status: 'note',
+        text: 'Commands you type yourself with ! in OpenCode run without belayd.',
+        hint: "OpenCode sends them straight to the shell, not through a tool. The agent's own commands are all checked.",
+      });
     return lines;
   },
 };

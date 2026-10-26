@@ -94,7 +94,8 @@ export interface Removal {
 }
 
 export interface DoctorLine {
-  status: 'ok' | 'warn' | 'fail';
+  /** `note`: a limit of the agent itself, nothing to fix. */
+  status: 'ok' | 'warn' | 'fail' | 'note';
   text: string;
   hint?: string;
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `belayd doctor` now says plainly where an agent itself leaves a gap, as a note rather than a warning: Copilot CLI lets a tool run when its hook times out (belayd answers well before, so it only matters if belayd cannot run at all), and commands you type yourself with `!` in OpenCode go straight to the shell. The README's limits say the same.
+
 ## 0.4.0 (2026-10-20)
 
 Several agents in one project, safely: belayd now stops one agent from wrecking another's uncommitted work, shows who is working where, and asks when an agent starts another one with its safety off. Also a security fix (update soon if you use 0.3.0), OpenCode 2 support and much cheaper snapshots in big projects.

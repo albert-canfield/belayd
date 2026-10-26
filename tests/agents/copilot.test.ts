@@ -163,6 +163,10 @@ describe('Copilot CLI setup', () => {
     expect(copilotSetup.doctor(real).some((l) => /Copilot CLI hook installed/.test(l.text))).toBe(
       true,
     );
+    // Copilot CLI lets a timed-out hook through: said plainly, as a note.
+    expect(copilotSetup.doctor(real).find((l) => l.status === 'note')?.text).toMatch(
+      /lets a tool run when its hook times out/,
+    );
     fs.rmSync(bin);
     expect(copilotSetup.doctor(real).some((l) => l.status === 'fail')).toBe(true);
   });

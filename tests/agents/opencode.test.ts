@@ -156,6 +156,9 @@ describe('OpenCode setup', () => {
     expect(opencodeSetup.doctor(old).some((l) => /older than 1\.18\.29/.test(l.text))).toBe(true);
     const fine = { ...opts(false), env: { ...opts(false).env, BELAYD_OPENCODE_VERSION: '2.1.1' } };
     expect(opencodeSetup.doctor(fine).some((l) => /older than/.test(l.text))).toBe(false);
+    expect(opencodeSetup.doctor(fine).find((l) => l.status === 'note')?.text).toMatch(
+      /type yourself with ! in OpenCode/,
+    );
     const file = opencodeTarget({ workspace: opts(false).workspace, env: opts(false).env }).file;
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('async server(', 'async old('));
     expect(opencodeSetup.doctor(fine).some((l) => /OpenCode 2 does not run it/.test(l.text))).toBe(
