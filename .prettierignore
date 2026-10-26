@@ -3,3 +3,5 @@ coverage/
 pnpm-lock.yaml
 docs/
 /*.md
+# Written by belayd init when OpenCode is installed
+.opencode/
