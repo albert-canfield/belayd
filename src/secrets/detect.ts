@@ -28,6 +28,15 @@ const DETECTORS: { id: string; re: RegExp }[] = [
   { id: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
 ];
 
+/**
+ * One quick test for text that may hold a match: the detectors without their word
+ * boundaries. False means no detector can match, also in the JSON-escaped form of the
+ * text, where a token after a newline follows `\n` with no boundary in between.
+ */
+export const SECRET_HINT = new RegExp(
+  DETECTORS.map((d) => d.re.source.replaceAll('\\b', '')).join('|'),
+);
+
 /** Values shorter than this are too likely to appear by accident. */
 const MIN_ENV_VALUE_LENGTH = 12;
 const BORING_VALUES =

@@ -3,15 +3,18 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { AgentId } from '../policy/types.js';
+import type { SecretSighting, TranscriptSecrets } from './secrets.js';
 
 /**
  * Reads agents' own session history, so `belayd scan` can show what belayd would have
- * done with the tool calls they already made. Everything stays on this machine.
+ * done with the tool calls they already made, and which secrets reached them. Everything
+ * stays on this machine.
  *
  * - Claude Code: `$CLAUDE_CONFIG_DIR/projects/**\/*.jsonl` (default `~/.claude/projects`),
  *   one JSON object per line; tool calls are `tool_use` items in assistant messages.
  * - Codex: `$CODEX_HOME/sessions/**\/rollout-*.jsonl` (default `~/.codex/sessions`), with a
  *   `session_meta` line for the folder and `function_call` / `custom_tool_call` items.
+ *   Archived sessions (`archived_sessions`) are read for secrets only.
  */
 export interface PastCall {
   agent: AgentId;
@@ -28,21 +31,21 @@ export interface Source {
   agent: AgentId;
   name: string;
   dir: string;
+  /** Sessions the person put away: they still hold secrets, but are not replayed. */
+  archive?: boolean;
 }
 
 export function sources(env: NodeJS.ProcessEnv = process.env): Source[] {
   const home = env.HOME || os.homedir();
+  const codex = env.CODEX_HOME || path.join(home, '.codex');
   return [
     {
       agent: 'claude-code',
       name: 'Claude Code',
       dir: path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'),
     },
-    {
-      agent: 'codex',
-      name: 'Codex',
-      dir: path.join(env.CODEX_HOME || path.join(home, '.codex'), 'sessions'),
-    },
+    { agent: 'codex', name: 'Codex', dir: path.join(codex, 'sessions') },
+    { agent: 'codex', name: 'Codex', dir: path.join(codex, 'archived_sessions'), archive: true },
   ];
 }
 
@@ -86,39 +89,96 @@ const CLAUDE_TOOLS = new Set([
   'WebFetch',
 ]);
 
-/** The tool calls in one session file, oldest first. */
-export async function* readCalls(
+export type HistoryEntry =
+  { call: PastCall; secret?: never } | { secret: SecretSighting; call?: never };
+
+export interface ReadOptions {
+  /** Tool calls to replay; off for archived sessions. Default on. */
+  calls?: boolean;
+  /** Also report secrets, found with this. */
+  secrets?: TranscriptSecrets;
+  /** Folders whose secrets count. Default every folder. */
+  keep?: (cwd: string) => boolean;
+}
+
+/**
+ * The tool calls in one session file, oldest first, and with `secrets` the keys and tokens
+ * in it. Each line is parsed at most once for both. Claude Code lines that hold neither are
+ * not parsed at all, which keeps a scan of a large history fast.
+ */
+export async function* readHistory(
   source: Source,
   file: string,
   since: number,
-): AsyncGenerator<PastCall> {
+  opts: ReadOptions = {},
+): AsyncGenerator<HistoryEntry> {
+  const finder = opts.secrets;
+  const calls = opts.calls !== false && !source.archive;
+  const keep = opts.keep ?? (() => true);
+  const claude = source.agent === 'claude-code';
   const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
-  let codexSession = path.basename(file, '.jsonl');
-  let codexCwd = '';
+  let session = path.basename(file, '.jsonl');
+  let cwd = '';
+  let last = NaN;
+  // One output stored twice (Claude Code's `toolUseResult`, Codex's `exec_command_end`) counts once.
+  const counted = new Set<string>();
+  const sightings = function* (e: unknown, at: number): Generator<HistoryEntry> {
+    for (const f of finder!.find(e, cwd)) {
+      if (f.call) {
+        const key = `${f.fingerprint}|${f.place}|${f.call}`;
+        if (counted.has(key)) continue;
+        counted.add(key);
+      }
+      yield { secret: { ...f, agent: source.agent, session, file, at, cwd } };
+    }
+  };
+
   for await (const line of rl) {
     if (line.length > 5_000_000) continue;
-    if (source.agent === 'claude-code' && !line.includes('"tool_use"')) continue;
+    const toolUse = calls && claude && line.includes('"tool_use"');
+    // Answered before parsing when the folder is known; undefined means not asked yet.
+    let hint: boolean | undefined;
+    if (claude && !toolUse) {
+      if (!finder) continue;
+      if (cwd) {
+        hint = keep(cwd) && finder.mayHold(line, cwd);
+        if (!hint) continue;
+      }
+    }
     let e: Record<string, unknown>;
     try {
       e = JSON.parse(line) as Record<string, unknown>;
     } catch {
       continue;
     }
-    if (source.agent === 'claude-code') {
-      const at = Date.parse(String(e.timestamp ?? ''));
-      if (!(at >= since)) continue;
+    if (e === null || typeof e !== 'object') continue;
+    const stamp = Date.parse(String(e.timestamp ?? ''));
+    if (stamp >= 0) last = stamp;
+
+    if (claude) {
+      if (typeof e.cwd === 'string' && e.cwd && e.cwd !== cwd) {
+        cwd = e.cwd;
+        hint = undefined;
+      }
+      if (typeof e.sessionId === 'string' && e.sessionId) session = e.sessionId;
+      const at = stamp >= 0 ? stamp : last;
+      if (finder && at >= since && (hint ?? (keep(cwd) && finder.mayHold(line, cwd))))
+        yield* sightings(e, at);
+      if (!toolUse || !(stamp >= since)) continue;
       const content = (e.message as { content?: unknown } | undefined)?.content;
       if (!Array.isArray(content)) continue;
       for (const c of content as Record<string, unknown>[]) {
         if (c.type !== 'tool_use' || typeof c.name !== 'string') continue;
         if (!CLAUDE_TOOLS.has(c.name) && !c.name.startsWith('mcp__')) continue;
         yield {
-          agent: 'claude-code',
-          session: String(e.sessionId ?? file),
-          at,
-          cwd: String(e.cwd ?? ''),
-          tool: c.name,
-          input: (c.input as Record<string, unknown>) ?? {},
+          call: {
+            agent: 'claude-code',
+            session: String(e.sessionId ?? file),
+            at: stamp,
+            cwd: String(e.cwd ?? ''),
+            tool: c.name,
+            input: (c.input as Record<string, unknown>) ?? {},
+          },
         };
       }
       continue;
@@ -126,14 +186,14 @@ export async function* readCalls(
     // Codex rollout
     const payload = (e.payload as Record<string, unknown> | undefined) ?? {};
     if (e.type === 'session_meta') {
-      codexSession = String(payload.id ?? payload.session_id ?? codexSession);
-      codexCwd = String(payload.cwd ?? '');
-      continue;
+      session = String(payload.id ?? payload.session_id ?? session);
+      cwd = String(payload.cwd ?? '');
     }
-    if (e.type === 'turn_context' && typeof payload.cwd === 'string') codexCwd = payload.cwd;
-    if (e.type !== 'response_item') continue;
-    const at = Date.parse(String(e.timestamp ?? ''));
-    if (!(at >= since)) continue;
+    if (e.type === 'turn_context' && typeof payload.cwd === 'string') cwd = payload.cwd;
+    const at = stamp >= 0 ? stamp : last;
+    if (finder && at >= since && keep(cwd) && !finder.repeats(e) && finder.mayHold(line, cwd))
+      yield* sightings(e, at);
+    if (!calls || e.type !== 'response_item' || !(stamp >= since)) continue;
     const name = String(payload.name ?? '');
     if (
       payload.type === 'function_call' &&
@@ -152,23 +212,27 @@ export async function* readCalls(
         argv && argv.length === 3 && /(^|\/)(ba|z)?sh$/.test(argv[0]!) && /^-l?c$/.test(argv[1]!)
           ? argv[2]
           : command;
-      const workdir = typeof args.workdir === 'string' ? args.workdir : codexCwd;
+      const workdir = typeof args.workdir === 'string' ? args.workdir : cwd;
       yield {
-        agent: 'codex',
-        session: codexSession,
-        at,
-        cwd: workdir,
-        tool: 'Bash',
-        input: { command: text },
+        call: {
+          agent: 'codex',
+          session,
+          at: stamp,
+          cwd: workdir,
+          tool: 'Bash',
+          input: { command: text },
+        },
       };
     } else if (payload.type === 'custom_tool_call' && name === 'apply_patch') {
       yield {
-        agent: 'codex',
-        session: codexSession,
-        at,
-        cwd: codexCwd,
-        tool: 'apply_patch',
-        input: { command: String(payload.input ?? '') },
+        call: {
+          agent: 'codex',
+          session,
+          at: stamp,
+          cwd,
+          tool: 'apply_patch',
+          input: { command: String(payload.input ?? '') },
+        },
       };
     }
   }

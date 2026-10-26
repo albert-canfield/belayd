@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New
+
+- `belayd scan --secrets` lists the API keys and tokens that reached your agents and are still in their transcripts on disk, where malware that steals keys looks for them: in tool output, commands, your prompts or the agent's replies, in Claude Code's and Codex's history (archived Codex sessions included). Each one is named by kind (`GitHub token`, `value of STRIPE_KEY from .env`) and a fingerprint, never by its value, with how often and when it turned up, the transcripts that hold it, and what to do: rotate the key, then delete the old transcripts. Plain `belayd scan` ends with one line when it finds any, and its examples now hide values from the project's .env too, not only known token formats.
+
 ### Fixed
 
 - Security: a command hidden in a variable that bash evaluates as arithmetic got through. Bash reads a variable named in arithmetic as arithmetic too, and runs the `$(...)` in an array index inside its value, so `x='a[$(rm -rf ~)]'; ((x))` deletes your home folder; so do `$((x))`, `[[ $x -eq 0 ]]`, `let y=x`, `declare -i y=x` and `${b[x]}`. belayd now checks such a value as the arithmetic it turns into. Affects every earlier version.

@@ -174,11 +174,16 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('--all', 'every project, not just this one')
     .option('--preset <name>', 'judge with this preset instead of your policy')
     .option('--examples <n>', 'examples to show per rule', '2')
+    .option('--secrets', 'list the keys and tokens in those transcripts, and what to do')
     .option('--json', 'print the counts as JSON')
     .addHelpText(
       'after',
       "\nReads Claude Code's and Codex's session history on this machine (~/.claude/projects,\n" +
-        '~/.codex/sessions). Nothing is run and nothing is sent anywhere.',
+        '~/.codex/sessions). Nothing is run and nothing is sent anywhere.\n\n' +
+        '--secrets lists API keys and tokens that reached your agents (in tool output, commands,\n' +
+        'prompts or replies) and are still in their transcripts, so you know which to rotate.\n' +
+        'Each is shown by kind and fingerprint, never the value. The fingerprint is the first 8\n' +
+        'hex digits of the value\'s SHA-256: printf %s "$KEY" | shasum -a 256',
     )
     .action(async (opts) => {
       const { scan } = await import('./scan.js');

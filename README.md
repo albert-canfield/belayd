@@ -77,6 +77,32 @@ Would have asked about
              e.g. sudo apt-get install -y jq
 
 See why with belayd check --explain "<command>". Once belayd is on, belayd tune turns questions you keep approving into rules.
+2 secrets (keys or tokens) found in these transcripts. See which to rotate: belayd scan --secrets
+```
+
+That last line matters. A key that an agent printed, sent or was handed in a prompt stays in its transcript on disk, and malware that steals keys reads those files. `belayd scan --secrets` names each one by kind and fingerprint, never the value, and says what to do:
+
+```console
+$ belayd scan --secrets
+belayd scan --secrets · my-app · last 30 days
+2 secrets reached your agents and are still in their transcripts. Shown by fingerprint, never the value.
+
+  ✖ value of STRIPE_KEY from .env  24329d0a
+    2 times, in tool output and tool input, 17 Oct to 24 Oct
+    Claude Code  24 Oct  ~/.claude/projects/-Users-me-my-app/7c1d2e9a-5b0f-4c1e-9d55-0f3a8e2b6c41.jsonl
+
+  ✖ GitHub token  594cde40
+    1 time, in user prompt, 24 Oct
+    Claude Code  24 Oct  ~/.claude/projects/-Users-me-my-app/7c1d2e9a-5b0f-4c1e-9d55-0f3a8e2b6c41.jsonl
+
+What to do
+  1. Rotate each key where it was issued: make a new one, switch to it, then revoke the old one.
+     Deleting it from a file is not enough: copies already exist.
+  2. Delete the transcripts that hold copies. Malware that steals keys reads these files.
+     Claude Code deletes transcripts older than cleanupPeriodDays in ~/.claude/settings.json
+     (default 30) when it starts. Lower it, or delete the files yourself (--json lists them all).
+
+The fingerprint is the start of the value's SHA-256. Check a key with: printf %s "$KEY" | shasum -a 256
 ```
 
 ## What you get
@@ -345,7 +371,7 @@ For the full reasoning, see [docs/integrations.md](docs/integrations.md) and [SE
 | Command | What it does |
 |---|---|
 | `belayd init` | Set up hooks for the agents it finds and write `belayd.yaml` |
-| `belayd scan` | What belayd would have done with your agents' past tool calls, before you turn it on |
+| `belayd scan` | What belayd would have done with your agents' past tool calls, before you turn it on. `--secrets` lists the keys in their transcripts to rotate |
 | `belayd check '<command>'` | Show what belayd would decide, without running anything (`--explain` lists every program found inside) |
 | `belayd approve` | Answer waiting requests in a live terminal console |
 | `belayd ui` | Open the local approval page |
