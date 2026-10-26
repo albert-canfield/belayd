@@ -887,3 +887,20 @@
     balanced: pass,
     strict: allow,
   }
+
+# --- Arithmetic on a variable runs the substitution in an array index ----------
+- { cmd: "x='a[$(rm -rf ~)]'; ((x))", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; (( $x ))", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; echo $((x + 1))", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; [[ $x -eq 0 ]]", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; let y=x", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; declare -i y=x", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; b=(1 2); echo ${b[x]}", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; b=(1 2); b[x]=3", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; y=x; ((y))", balanced: deny }
+- { cmd: "x='a[$(rm -rf ~)]'; for ((i=x; i<3; i++)); do :; done", balanced: deny }
+- { cmd: "x='a[`rm -rf ~`]'; ((x))", balanced: deny }
+- { cmd: 'x=5; ((x > 3)) && echo big', balanced: pass, strict: allow }
+- { cmd: 'n=$(wc -l < README.md); ((n > 0)) && echo yes', balanced: pass, strict: allow }
+- { cmd: 'for ((i=0; i<3; i++)); do echo $i; done', balanced: pass, strict: allow }
+- { cmd: "x='$(rm -rf ~)'; [[ $x == hi ]] && echo same", balanced: pass, strict: allow }

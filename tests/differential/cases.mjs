@@ -52,6 +52,13 @@ const DISGUISES = {
   heredoc: (a, full) => `bash <<'EOF'\n${full}\nEOF`,
   'source process substitution': (a, full) => `source <(echo ${q(full)})`,
   'base64 into bash': (a, full) => `echo ${b64(full)} | base64 -d | bash`,
+  // Bash evaluates a variable named in arithmetic as arithmetic, and runs the
+  // substitution in an array index inside its value.
+  'arithmetic on a variable': (a, full) => `X=${q(`a[$(${full})]`)}; ((X))`,
+  'arithmetic in [[ -eq ]]': (a, full) => `X=${q(`a[$(${full})]`)}; [[ $X -eq 0 ]]`,
+  'let on a variable': (a, full) => `X=${q(`a[$(${full})]`)}; let Y=X`,
+  'declare -i from a variable': (a, full) => `X=${q(`a[$(${full})]`)}; declare -i Y=X`,
+  'array index from a variable': (a, full) => `X=${q(`a[$(${full})]`)}; B=(1); echo \${B[X]}`,
   'base64 into eval': (a, full) => `eval "$(echo ${b64(full)} | base64 --decode)"`,
   'printf into sh': (a, full) => `printf '%s\\n' ${q(full)} | sh`,
   'xargs sh -c': (a, full) => `echo ${q(full)} | xargs -0 sh -c`,

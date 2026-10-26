@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Security: a command hidden in a variable that bash evaluates as arithmetic got through. Bash reads a variable named in arithmetic as arithmetic too, and runs the `$(...)` in an array index inside its value, so `x='a[$(rm -rf ~)]'; ((x))` deletes your home folder; so do `$((x))`, `[[ $x -eq 0 ]]`, `let y=x`, `declare -i y=x` and `${b[x]}`. belayd now checks such a value as the arithmetic it turns into. Affects every earlier version.
 - Commands hidden where belayd did not look now count: `$(...)` inside `[[ ]]`, in an array index (`a[$(cmd)]=1`, `${a[$(cmd)]}`), in a `${...}` operand (`${x:+$(cmd)}`, `${x#$(cmd)}`, `${x:=$(cmd)}`), in a `case` pattern, and in a brace or extended glob body (`{a,$(cmd)}`, `@($(cmd))`). Bash runs every one of them, and `[[ -n $(rm -rf ~) ]]` used to pass.
 - `rm -rf {$HOME,x}`, `rm -rf {"$HOME",x}` and nested braces like `rm -rf {x,{~,y}}` were read as plain file names and passed. A brace with quotes, expansions or another brace inside is now an unknown path, so belayd asks.
 - A very long arithmetic expression (`$((1+1+...))` with thousands of terms) no longer runs belayd out of stack. That error blocked the command, or let it through with `failMode: open`.

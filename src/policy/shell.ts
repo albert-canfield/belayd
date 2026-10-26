@@ -656,6 +656,41 @@ class Analyzer {
   private ifsMentioned = false;
   private exhausted = false;
 
+  /**
+   * Bash evaluates a variable named in arithmetic as arithmetic too, and an array index in
+   * that value runs its substitutions: `x='a[$(rm -rf ~)]'; ((x))` runs rm, and so do
+   * `$((x))`, `[[ $x -eq 0 ]]`, `let y=x`, `declare -i y=x` and `${b[x]}`. A variable
+   * named in such a place whose known value holds `$`, a backtick or another variable is
+   * checked as the arithmetic it turns into. Unknown values are not followed: a count
+   * read from a command (`n=$(wc -l)`) is everywhere, and asking about it would be noise.
+   */
+  private arithmeticVars(
+    texts: (string | undefined)[],
+    scope: Scope,
+    ctx: Ctx,
+    seen = new Set<string>(),
+  ): void {
+    for (const text of texts) {
+      if (!text) continue;
+      for (const m of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+        const name = m[0];
+        if (seen.has(name) || seen.size > 64) continue;
+        seen.add(name);
+        const value = scope.vars.get(name);
+        if (typeof value !== 'string' || value === '') continue;
+        if (/[$`]/.test(value))
+          this.source(
+            `(( ${value} ))`,
+            cloneScope(scope),
+            { ...ctx, depth: ctx.depth + 1, via: [...ctx.via, `$${name}`] },
+            undefined,
+          );
+        // A value can name another variable, which is evaluated in turn.
+        this.arithmeticVars([value], scope, ctx, seen);
+      }
+    }
+  }
+
   source(src: string, scope: Scope, ctx: Ctx, stdin: StdinInfo | undefined): void {
     if (ctx.depth > MAX_DEPTH) {
       this.pushDynamic(src, scope, ctx, 'nested too deeply to analyse');
@@ -757,6 +792,7 @@ class Analyzer {
       }
       case 'ArithmeticFor': {
         this.substitutionsIn([n.initialize, n.test, n.update], src, scope, ctx);
+        this.arithmeticVars([src.slice(n.pos, n.body ? n.body.pos : n.end)], scope, ctx);
         this.loop(scope, (body) => this.compoundList(n.body, src, body, ctx));
         break;
       }
@@ -794,9 +830,14 @@ class Analyzer {
         break;
       }
       case 'TestCommand':
-      case 'ArithmeticCommand':
+      case 'ArithmeticCommand': {
         this.substitutionsIn([n.expression], src, scope, ctx);
+        const text = src.slice(n.pos, n.end);
+        // `[[ ]]` evaluates the operands of -eq, -lt and the like as arithmetic.
+        if (n.type === 'ArithmeticCommand' || /\s-(eq|ne|lt|le|gt|ge)\s/.test(text))
+          this.arithmeticVars([text], scope, ctx);
         break;
+      }
       case 'Redirected': {
         this.node(n.command, src, scope, ctx, stdin);
         const redirects = this.redirects(n.redirects, src, scope, ctx).redirects;
@@ -914,6 +955,7 @@ class Analyzer {
         add(w, expandWord(w));
       } else {
         const value = this.evalAssignment(arg, src, scope, ctx);
+        this.arithmeticVars([assignedIndex(arg.text)], scope, ctx);
         const w = { ...value, value: `${arg.name}=${value.value}`, text: arg.text };
         delete w.candidates;
         add(w, [w]);
@@ -924,8 +966,10 @@ class Analyzer {
     // but they can still hide substitutions that run.
     const prefixAssignments: { name: string; value: EvalWord }[] = [];
     for (const p of cmd.prefix) {
-      if (p.type === 'Assignment')
+      if (p.type === 'Assignment') {
         prefixAssignments.push({ name: p.name, value: this.evalAssignment(p, src, scope, ctx) });
+        this.arithmeticVars([assignedIndex(p.text)], scope, ctx);
+      }
     }
     const { redirects, inline, exact } = this.redirects(cmd.redirects, src, scope, ctx);
     for (const a of prefixAssignments) {
@@ -977,6 +1021,23 @@ class Analyzer {
       for (const probe of combos)
         this.invoke(probe, text, cloneScope(scope), ctx, effectiveStdin, redirects);
     }
+    // Builtins that evaluate their arguments as arithmetic: `let y=x`, `declare -i y=x`.
+    const head = programName(words[0]?.value ?? '');
+    if (head === 'let')
+      this.arithmeticVars(
+        words.slice(1).map((w) => w.value),
+        scope,
+        ctx,
+      );
+    else if (
+      ['declare', 'typeset', 'local', 'export', 'readonly'].includes(head) &&
+      words.some((w) => /^-[A-Za-z]*i/.test(w.value))
+    )
+      this.arithmeticVars(
+        assignments.map((a) => a.value.value),
+        scope,
+        ctx,
+      );
     const program = this.invoke(words, text, scope, ctx, effectiveStdin, redirects);
     this.trackWrites(program, words, redirects, scope);
 
@@ -2565,6 +2626,8 @@ class Analyzer {
         case 'ParameterExpansion': {
           let v: string | string[] | undefined;
           let operandRead = false;
+          // An index (`${a[x]}`) is arithmetic.
+          if (part.index) this.arithmeticVars([(part.index as { text?: string }).text], scope, ctx);
           if (!part.prefix && !part.index && !part.operation)
             v = this.lookup(part.parameter, scope) ?? choicesOf(part.parameter);
           // `${BASH_SOURCE[0]}` is the script being read, like `$0`.
@@ -2654,6 +2717,7 @@ class Analyzer {
         }
         case 'ArithmeticExpansion':
           this.substitutionsIn([part.expression], src, scope, ctx);
+          this.arithmeticVars([part.text], scope, ctx);
           unknown(false);
           append([part.text]);
           break;
@@ -3533,4 +3597,9 @@ function probes(slots: EvalWord[][]): { combos: EvalWord[][]; complete: boolean 
 function folders(scope: Scope): (string | undefined)[] {
   if (scope.cwd !== undefined) return [scope.cwd];
   return [...(scope.cwdChoices ?? []), ...(scope.cwdExhaustive ? [] : [undefined])];
+}
+
+/** The index of an array element being assigned (`b[x]=1`), which bash evaluates as arithmetic. */
+function assignedIndex(text: string): string | undefined {
+  return /^[A-Za-z_][A-Za-z0-9_]*\[(.*)\]\+?=/s.exec(text)?.[1];
 }
