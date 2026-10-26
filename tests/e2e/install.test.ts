@@ -16,6 +16,22 @@ const handlers = (file: string) =>
   (read(file).hooks?.PreToolUse ?? []).flatMap((g: { hooks: unknown[] }) => g.hooks);
 
 describe('belayd init and uninstall for Claude Code', () => {
+  it('shows what the project brings and approves it, so the first call is not a question', () => {
+    fs.writeFileSync(
+      path.join(sb.project, '.mcp.json'),
+      JSON.stringify({ mcpServers: { helper: { command: 'npx', args: ['-y', 'helper-mcp'] } } }),
+    );
+    const r = belayd(sb, ['init', '--yes'], { env: NEW });
+    expect(r.stdout).toMatch(/This project brings things that can run code or steer an agent/);
+    expect(r.stdout).toMatch(/\.mcp\.json: MCP server helper runs `npx -y helper-mcp`/);
+    const first = belayd(sb, ['hook', 'claude-code'], {
+      input: hookPayload(sb, 'Bash', { command: 'ls' }),
+      env: NEW,
+    });
+    expect(first.stdout).not.toMatch(/ask-project-setup/);
+    expect(belayd(sb, ['preflight'], { env: NEW }).stdout).toMatch(/All approved/);
+  });
+
   it('installs an exec-form hook that blocks on failure, pinned to this build', () => {
     const r = belayd(sb, ['init', '--yes'], { env: NEW });
     expect(r.status, r.stderr).toBe(0);

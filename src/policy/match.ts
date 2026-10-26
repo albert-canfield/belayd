@@ -19,6 +19,10 @@ export interface MatchEnv {
   envValues(): Map<string, string>;
   /** Another live agent's uncommitted work this subject would clobber, described. */
   othersWork?: (s: Subject) => string | undefined;
+  /** What is new in the project's setup since the person last approved it, described. */
+  projectSetup?: () => string | undefined;
+  /** Packages this subject installs that nobody has heard of, described. */
+  unknownPackage?: (s: Subject) => string | undefined;
 }
 
 export function createMatchEnv(
@@ -26,6 +30,8 @@ export function createMatchEnv(
   belaydHome: string,
   sessionWrites: Set<string> = new Set(),
   othersWork?: (s: Subject) => string | undefined,
+  projectSetup?: () => string | undefined,
+  unknownPackage?: (s: Subject) => string | undefined,
 ): MatchEnv {
   let cached: Map<string, string> | undefined;
   return {
@@ -34,6 +40,8 @@ export function createMatchEnv(
     sessionWrites,
     envValues: () => (cached ??= loadEnvValues(ctx.workspace)),
     ...(othersWork ? { othersWork } : {}),
+    ...(projectSetup ? { projectSetup } : {}),
+    ...(unknownPackage ? { unknownPackage } : {}),
   };
 }
 
@@ -111,6 +119,26 @@ export function matches(m: Match, s: Subject, env: MatchEnv): MatchResult {
   if (m.gitRunsCode !== undefined) {
     if (Boolean(s.gitRunsCode) !== m.gitRunsCode) return no;
     if (s.gitRunsCode) return { matched: true, detail: s.gitRunsCode };
+  }
+  if (m.unknownPackage !== undefined) {
+    let hit: string | undefined;
+    try {
+      hit = env.unknownPackage?.(s);
+    } catch {
+      hit = undefined;
+    }
+    if (Boolean(hit) !== m.unknownPackage) return no;
+    if (hit) return { matched: true, detail: hit };
+  }
+  if (m.projectSetup !== undefined) {
+    let hit: string | undefined;
+    try {
+      hit = env.projectSetup?.();
+    } catch {
+      hit = undefined;
+    }
+    if (Boolean(hit) !== m.projectSetup) return no;
+    if (hit) return { matched: true, detail: hit };
   }
   if (m.agentSafetyOff !== undefined) {
     if (Boolean(s.safetyOff) !== m.agentSafetyOff) return no;

@@ -74,6 +74,7 @@ export function compilePolicy(input: CompileInput): CompiledPolicy {
     disable: [...new Set([...base.disable, ...user.disable])],
     approval: { ...base.approval, ...user.approval },
     snapshots: { ...base.snapshots, ...user.snapshots },
+    packages: { ...base.packages, ...user.packages },
   };
   const extendsName = user.extends ?? base.extends ?? DEFAULT_PRESET;
   const compiled = compile(merged, file, extendsName, new Set(base.disable));
@@ -120,6 +121,7 @@ function compileUntrusted(
   if (user.disable.length > 0) ignored.push(`disable: [${user.disable.join(', ')}]`);
   if (user.failMode === 'open') ignored.push('failMode: open');
   if (user.snapshots) ignored.push('snapshots settings');
+  if (user.packages) ignored.push('packages settings');
 
   // Approval settings decide who may answer and how; only a shorter wait is accepted.
   const baseTimeout =
@@ -231,6 +233,7 @@ export function compile(
   let approval: PolicyFile['approval'] = {};
   let failMode: PolicyFile['failMode'];
   let snapshots: PolicyFile['snapshots'] = {};
+  let packages: PolicyFile['packages'] = {};
   for (const p of chain) {
     for (const r of p.rules) presetRules.set(r.id, r);
     for (const id of p.disable) presetRules.delete(id);
@@ -238,6 +241,7 @@ export function compile(
     approval = { ...approval, ...p.approval };
     failMode = p.failMode ?? failMode;
     snapshots = { ...snapshots, ...p.snapshots };
+    packages = { ...packages, ...p.packages };
   }
 
   if (user) {
@@ -255,6 +259,7 @@ export function compile(
     approval = { ...approval, ...user.approval };
     failMode = user.failMode ?? failMode;
     snapshots = { ...snapshots, ...user.snapshots };
+    packages = { ...packages, ...user.packages };
     const seen = new Set<string>();
     for (const r of user.rules) {
       if (seen.has(r.id)) throw new PolicyError(`rule id "${r.id}" is used twice`, userFile);
@@ -293,6 +298,7 @@ export function compile(
       maxFileSize: toBytes(snapshots?.maxFileSize ?? '20MB'),
       keepDays: Math.max(1, Number(/^(\d+)d$/.exec(snapshots?.keep ?? '30d')?.[1] ?? 30)),
     },
+    packages: { check: packages?.check ?? true },
   };
 }
 

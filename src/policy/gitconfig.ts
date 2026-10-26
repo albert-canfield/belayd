@@ -77,7 +77,8 @@ function keyMatches(key: string): boolean {
   });
 }
 
-function judge(key: string, value: string): string | undefined {
+/** Why setting this Git option to this value runs code or switches hooks off, or undefined. */
+export function optionRunsCode(key: string, value: string): string | undefined {
   const k = key.toLowerCase();
   if (k === 'core.hookspath') {
     return value === '/dev/null' || value === 'NUL'
@@ -101,7 +102,7 @@ export function gitRunsCode(program: string | undefined, raw: string[]): string 
     if (w === '-c' && i + 1 < raw.length) {
       const pair = raw[++i]!;
       const eq = pair.indexOf('=');
-      const hit = eq > 0 ? judge(pair.slice(0, eq), pair.slice(eq + 1)) : undefined;
+      const hit = eq > 0 ? optionRunsCode(pair.slice(0, eq), pair.slice(eq + 1)) : undefined;
       if (hit) return hit;
     } else if (w === '-C' || w === '--git-dir' || w === '--work-tree' || w === '--namespace') {
       i++;
@@ -125,5 +126,5 @@ export function gitRunsCode(program: string | undefined, raw: string[]): string 
   const [key, value] = words;
   // Only the key: that reads it.
   if (key === undefined || value === undefined) return undefined;
-  return judge(key, value);
+  return optionRunsCode(key, value);
 }

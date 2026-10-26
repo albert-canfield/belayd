@@ -22,6 +22,10 @@ export interface EvaluateOptions {
   sessionWrites?: Set<string>;
   /** Another live agent's uncommitted work a subject would clobber (src/policy/clobber.ts). */
   othersWork?: (s: Subject) => string | undefined;
+  /** What is new in the project's setup (src/preflight/check.ts). */
+  projectSetup?: () => string | undefined;
+  /** Packages nobody has heard of (src/packages/check.ts). */
+  unknownPackage?: (s: Subject) => string | undefined;
 }
 
 export function evaluate(
@@ -36,6 +40,8 @@ export function evaluate(
     opts.belaydHome,
     opts.sessionWrites,
     opts.othersWork,
+    opts.projectSetup,
+    opts.unknownPackage,
   );
   const results = subjects.map((s) => decideSubject(s, policy, env));
 
@@ -79,6 +85,8 @@ export function judgeSubjects(
     opts.belaydHome,
     opts.sessionWrites,
     opts.othersWork,
+    opts.projectSetup,
+    opts.unknownPackage,
   );
   return buildSubjects(action, ctx, opts.sessionWrites).map((subject) => {
     const r = decideSubject(subject, policy, env);
@@ -114,7 +122,8 @@ function decideSubject(s: Subject, policy: CompiledPolicy, env: MatchEnv): Subje
     hit.rule.decision !== 'deny' &&
     hit.rule.match.changedRunner === undefined &&
     hit.rule.match.changedScript === undefined &&
-    hit.rule.match.othersWork === undefined;
+    hit.rule.match.othersWork === undefined &&
+    hit.rule.match.projectSetup === undefined;
   if (!hit || ownCode)
     return {
       verdict: policy.default,

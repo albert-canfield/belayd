@@ -52,6 +52,8 @@ Tests never write to your real agent configuration. The end-to-end tests run the
 | `src/audit/` | The append-only log |
 | `src/snapshots/` | Shadow repository snapshots, undo and redo, and their retention |
 | `src/secrets/` | Recognising secrets in files and in outgoing data |
+| `src/packages/` | Packages a command installs, and what their public registry says about them |
+| `src/preflight/` | What a project brings that runs code or steers an agent, and what the person approved |
 | `src/scan/` | Reading past tool calls from the agents' own history for `belayd scan` |
 | `src/cli/` | Every command except `belayd hook` |
 | `src/util/` | Path and file helpers shared by everything above |

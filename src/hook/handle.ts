@@ -5,6 +5,8 @@ import { maybeStartGc } from '../snapshots/retention.js';
 import { addSessionWrites, finishCall, sessionWrites, startCall } from '../audit/session.js';
 import { noteCall } from '../audit/live.js';
 import { makeClobberCheck } from '../policy/clobber.js';
+import { confirmSetup, makeSetupCheck, ownCommand } from '../preflight/check.js';
+import { makePackageCheck, prefetchPackages } from '../packages/check.js';
 import { buildSubjects } from '../policy/subjects.js';
 import { evaluate } from '../policy/engine.js';
 import { actionLabel } from '../policy/label.js';
@@ -117,6 +119,8 @@ export async function handleToolHook(
     } catch {
       // recording the outcome matters more than the snapshot
     }
+    // The call ran, so a question about the project's setup was answered yes.
+    if (input.phase === 'post') confirmSetup(stateDir, workspace);
     noteCall(stateDir, workspace, {
       session,
       agent,
@@ -188,10 +192,27 @@ export async function handleToolHook(
     // Fault injection for the test suite, which proves that failures block.
     if (deps.env.BELAYD_FAULT === 'after-policy') throw new Error('injected fault');
     if (deps.env.BELAYD_FAULT === 'hang') for (;;);
+    const writes = sessionWrites(stateDir, session);
+    // Registry lookups for packages the project does not have yet; matching is synchronous.
+    const packageFacts = policy.packages.check
+      ? await prefetchPackages(action, ctx, {
+          belaydHome: stateDir,
+          env: deps.env,
+          sessionWrites: writes,
+        })
+      : undefined;
     const decision = evaluate(action, ctx, policy, {
       belaydHome: stateDir,
-      sessionWrites: sessionWrites(stateDir, session),
+      sessionWrites: writes,
+      ...(packageFacts
+        ? { unknownPackage: makePackageCheck({ workspace, env: deps.env, facts: packageFacts }) }
+        : {}),
       othersWork: makeClobberCheck({ belaydHome: stateDir, workspace, session, cwd }),
+      projectSetup: makeSetupCheck({
+        belaydHome: stateDir,
+        workspace,
+        own: ownCommand(process.execPath, deps.binPath ?? process.argv[1] ?? ''),
+      }),
     });
     const rule = decision.ruleId ? ` [rule: ${decision.ruleId}]` : '';
     const facts = {

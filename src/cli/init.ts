@@ -8,6 +8,8 @@ import { AGENTS, findAgent, hookAgents, type AgentEntry } from '../agents/regist
 import type { InstallPlan, SetupOptions } from '../agents/types.js';
 import { listPresets, POLICY_FILE } from '../policy/load.js';
 import { isTrusted, trustFile } from '../policy/trust.js';
+import { approveSetup, ownCommand } from '../preflight/check.js';
+import { inventory } from '../preflight/inventory.js';
 import { tooBroad } from '../snapshots/capture.js';
 import { belaydHome, findWorkspace } from '../util/paths.js';
 
@@ -99,6 +101,17 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
   }
   console.log('');
   for (const note of otherAgents(agents, process.env)) console.log(pc.dim(`  ${note}`));
+  // What the project brings that runs code or steers agents: saying yes approves it too.
+  const own = ownCommand(process.execPath, binPath);
+  const setup = opts.global ? [] : inventory(workspace, own);
+  if (setup.length > 0) {
+    console.log(`  This project brings things that can run code or steer an agent:`);
+    for (const item of setup.slice(0, 8)) console.log(pc.dim(`    ${item.label}`));
+    if (setup.length > 8)
+      console.log(pc.dim(`    and ${setup.length - 8} more (belayd preflight)`));
+    console.log(pc.dim('  Going ahead approves them; belayd asks again when one changes.'));
+    console.log('');
+  }
 
   if (!(await confirm(opts.yes, 'Go ahead?'))) {
     console.log('Nothing changed.');
@@ -110,6 +123,7 @@ export async function init(opts: InitOptions, cwd = process.cwd()): Promise<numb
     const backup = p.plan.apply();
     if (backup) backups.push(backup);
   }
+  if (!opts.global) approveSetup(belaydHome(), workspace, own);
   if (writePolicy) {
     fs.mkdirSync(path.dirname(policyFile), { recursive: true });
     const text = policyTemplate(preset);
@@ -236,7 +250,7 @@ rules: []
 `;
 }
 
-function installedBinPath(): string {
+export function installedBinPath(): string {
   const script = process.argv[1] ?? '';
   try {
     return fs.realpathSync(script);

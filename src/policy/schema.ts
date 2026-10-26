@@ -36,6 +36,10 @@ export const MatchSchema = z
     gitRunsCode: z.boolean().optional(),
     /** Would overwrite, throw away, stash or commit another live agent's uncommitted work. */
     othersWork: z.boolean().optional(),
+    /** The project brings something that runs code or steers the agent, new since the person last looked. */
+    projectSetup: z.boolean().optional(),
+    /** Installs a package the project does not have that its registry does not know, or only just got. */
+    unknownPackage: z.boolean().optional(),
   })
   .strict();
 
@@ -76,6 +80,8 @@ export const PolicySchema = z
       .strict()
       .optional(),
     failMode: z.enum(['closed', 'open']).optional(),
+    /** Look up packages the project does not have yet in their public registry before an install. */
+    packages: z.object({ check: z.boolean().optional() }).strict().optional(),
     snapshots: z
       .object({
         enabled: z.boolean().optional(),

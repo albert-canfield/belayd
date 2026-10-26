@@ -46,6 +46,9 @@ try {
 
   const agents = input('agents') || 'claude-code,codex,copilot,gemini,opencode';
   run('belayd', ['init', '--global', '--yes', '--agent', agents], env);
+  // The repository checked out here is the workflow owner's own: approve what it brings
+  // (hooks, MCP servers, Git options), or every call in the job would be a question.
+  run('belayd', ['preflight', '--approve'], env);
 } catch (err) {
   console.log(`::error::belayd could not be set up: ${err.message}`);
   process.exitCode = 1;

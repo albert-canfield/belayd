@@ -217,6 +217,17 @@ rules:
     decision: ask
     reason: Changes belayd's policy or an agent's hook settings, which could switch belayd off.
 
+  - id: ask-unknown-package
+    match: { unknownPackage: true }
+    decision: ask
+    reason: Installs a package this project does not have yet, and its registry does not know it or only just got it. Models make up package names, and attackers register them. Check the name before it installs.
+
+  - id: ask-project-setup
+    final: true
+    match: { projectSetup: true }
+    decision: ask
+    reason: This project brings things that run code or steer the agent. Look at them before the agent goes on; once you say yes, belayd remembers them and asks again only when they change.
+
   - id: ask-other-agents-work
     final: true
     match: { othersWork: true }

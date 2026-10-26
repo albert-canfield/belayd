@@ -2,6 +2,7 @@ import path from 'node:path';
 import pc from 'picocolors';
 import { evaluate } from '../policy/engine.js';
 import { loadPolicy } from '../policy/load.js';
+import { makePackageCheck, prefetchPackages } from '../packages/check.js';
 import type { Action, ActionContext, Decision, Verdict } from '../policy/types.js';
 import { belaydHome, canonicalPath, findWorkspace, homeDir } from '../util/paths.js';
 
@@ -32,7 +33,16 @@ export async function check(commandWords: string[], opts: CheckOptions): Promise
     ...(opts.preset ? { preset: opts.preset } : {}),
   });
   const ctx: ActionContext = { agent: 'cli', cwd, workspace, home: canonicalPath(homeDir()) };
-  const decision = evaluate(action, ctx, policy, { belaydHome: state });
+  // The same registry lookups the hook makes, so a made-up package name shows here too.
+  const facts = policy.packages.check
+    ? await prefetchPackages(action, ctx, { belaydHome: state, env: process.env })
+    : undefined;
+  const decision = evaluate(action, ctx, policy, {
+    belaydHome: state,
+    ...(facts
+      ? { unknownPackage: makePackageCheck({ workspace: ctx.workspace, env: process.env, facts }) }
+      : {}),
+  });
 
   if (opts.json) {
     console.log(JSON.stringify({ action, policy: policy.name, ...decision }, null, 2));

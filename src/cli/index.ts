@@ -89,6 +89,18 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   program
+    .command('preflight')
+    .description(
+      'Show what this project brings that can run code or steer an agent, and what is new',
+    )
+    .option('--approve', 'approve it as it is now; belayd asks again when something changes')
+    .option('--json', 'print it as JSON')
+    .action(async (opts) => {
+      const { preflight } = await import('./preflight.js');
+      process.exitCode = await preflight(opts);
+    });
+
+  program
     .command('ps')
     .description('Show the agents working in this project right now, and their uncommitted changes')
     .option('--all', 'every project with an agent at work')
